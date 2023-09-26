@@ -2,7 +2,7 @@ name: test
 on:
   push:
     branches-ignore:
-      - 'actions-commit-and-create-pr/*'
+      - "actions-commit/*"
 
 jobs:
   test:
@@ -17,16 +17,3 @@ jobs:
         shell: bash
       - id: commit
         uses: ./
-      - name: verify
-        run: |
-          ./testdata/verify.sh ${{ steps.commit.outputs.pr-url }}
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-      - name: clean up
-        if: always()
-        run: |
-          gh pr close --delete-branch ${{ steps.commit.outputs.pr-url }} || true
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}

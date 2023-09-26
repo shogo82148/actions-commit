@@ -1,4 +1,4 @@
-# Commit and Create a Pull Request Action
+# Commit Action
 
 Commit all changes to a new branch, create a pull request.
 The action uses the GraphQL API instead of the `git` command.
@@ -20,8 +20,8 @@ jobs:
       - name: make some changes
         run: ": do something"
 
-      - name: commit and create a pull request
-        uses: shogo82148/actions-commit-and-create-pr@v1
+      - name: commit
+        uses: shogo82148/actions-commit@v1
 ```
 
 ## Limitation
@@ -42,28 +42,12 @@ The base branch. The default is the branch name that triggered the workflow run.
 
 ### head-branch
 
-The head branch. The default is `actions-commit-and-create-pr/$(date -u '+%Y-%m-%d')-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT`.
-
-### head-branch-prefix
-
-The prefix of the head branch.
-If `head-branch` is set, `head-branch-prefix` is ignored.
-The default is `actions-commit-and-create-pr/`.
+The head branch. The default is same as `base-branch`.
 
 ### commit-message:
 
 The commit message.
 The default is "Auto updates by the $GITHUB_WORKFLOW workflow".
-
-### title
-
-The title of pull requests.
-The default is same as the commit message.
-
-### body
-
-The body of a pull request.
-The default is same as the commit message.
 
 ## Related Works
 
