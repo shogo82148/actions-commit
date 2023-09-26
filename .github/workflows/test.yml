@@ -1,0 +1,32 @@
+name: test
+on:
+  push:
+    branches-ignore:
+      - 'actions-commit-and-create-pr/*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          github-token: "this token should be not used because there is no changes"
+      - name: make some changes
+        run: ./testdata/update.sh
+        shell: bash
+      - id: commit
+        uses: ./
+      - name: verify
+        run: |
+          ./testdata/verify.sh ${{ steps.commit.outputs.pr-url }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: clean up
+        if: always()
+        run: |
+          gh pr close --delete-branch ${{ steps.commit.outputs.pr-url }} || true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
