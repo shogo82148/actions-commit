@@ -2,11 +2,13 @@ name: test
 on:
   push:
     branches-ignore:
-      - 'actions-commit-and-create-pr/*'
+      - "actions-commit/*"
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: ./
@@ -17,16 +19,5 @@ jobs:
         shell: bash
       - id: commit
         uses: ./
-      - name: verify
-        run: |
-          ./testdata/verify.sh ${{ steps.commit.outputs.pr-url }}
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-      - name: clean up
-        if: always()
-        run: |
-          gh pr close --delete-branch ${{ steps.commit.outputs.pr-url }} || true
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          head-branch: "actions-commit/${{ github.run_id}}-${{ github.run_attempt }}"
