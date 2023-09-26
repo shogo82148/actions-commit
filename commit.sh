@@ -107,5 +107,4 @@ git reset HEAD > /dev/null 2>&1
 
 cat <<__END_OF_OUTPUT__ >> "$GITHUB_OUTPUT"
 commit-url=$COMMIT_URL
-pr-url=$PR_URL
 __END_OF_OUTPUT__

@@ -19,3 +19,5 @@ jobs:
         shell: bash
       - id: commit
         uses: ./
+        with:
+          head-branch: "actions-commit/${{ github.run_id}}-${{ github.run_attempt }}"
