@@ -15,6 +15,10 @@ inputs:
   commit-message:
     description: "The commit message"
     required: false
+  working-directory:
+    description: "The working directory"
+    required: false
+    default: "."
 outputs:
   commit-url:
     description: "The URL of a commit created"
@@ -23,8 +27,11 @@ runs:
   using: "composite"
   steps:
     - id: commit
-      run: ${{ github.action_path }}/commit.sh
+      run: |
+        cd 
+        ${{ github.action_path }}/commit.sh
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         GITHUB_TOKEN: "${{ inputs.github-token }}"
         INPUT_BASE_BRANCH: "${{ inputs.base-branch }}"
