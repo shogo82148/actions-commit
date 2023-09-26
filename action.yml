@@ -28,7 +28,6 @@ runs:
   steps:
     - id: commit
       run: |
-        cd 
         ${{ github.action_path }}/commit.sh
       shell: bash
       working-directory: ${{ inputs.working-directory }}
