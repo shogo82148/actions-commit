@@ -42,6 +42,25 @@ export declare function isRegularFileChange(change: StagedChange): boolean;
  * @returns The commit created, or undefined if there are no changes.
  */
 export declare function commit(options: CommitOptions, client: Client): Promise<Commit | undefined>;
+/** Options of the checkout after the commit. */
+export interface CheckoutOptions {
+    workingDirectory: string;
+    /** The branch that the commit was created on. */
+    headBranch: string;
+    /** The URL of the remote repository, e.g. "https://github.com/octocat/hello-world". */
+    remoteUrl: string;
+    /** Additional environment variables for git fetch, e.g. authEnv(). */
+    env?: Record<string, string>;
+}
+/**
+ * Fetches the commit created by the API, and checks it out.
+ * After that, HEAD points to the commit and the working tree is clean
+ * (except changes that are not committed, e.g. outside of the working directory).
+ *
+ * @param options The options.
+ * @param sha The SHA of the commit.
+ */
+export declare function checkout(options: CheckoutOptions, sha: string): Promise<void>;
 /**
  * The main function for the action.
  *

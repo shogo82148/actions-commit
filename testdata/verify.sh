@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# verify that the commit created by the action has the same tree as the local changes.
+# verify that the action checked out the commit, and the commit has the same tree as the local changes.
 # usage: verify.sh COMMIT_SHA
 
 set -ue
@@ -9,6 +9,19 @@ SHA=$1
 
 CURRENT=$(cd "$(dirname "$0")" && pwd)
 cd "$CURRENT/.."
+
+# the action should check out the commit.
+HEAD_SHA=$(git rev-parse HEAD)
+if [[ "$HEAD_SHA" != "$SHA" ]]; then
+    echo "::error::HEAD is not the commit. expected: $SHA, actual: $HEAD_SHA"
+    exit 1
+fi
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "::error::the working tree is not clean after the checkout."
+    git status
+    exit 1
+fi
+echo "checkout is OK."
 
 git add --all .
 EXPECTED_TREE=$(git write-tree)

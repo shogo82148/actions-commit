@@ -28731,6 +28731,38 @@ var ExitCode;
     ExitCode[ExitCode["Failure"] = 1] = "Failure";
 })(ExitCode || (ExitCode = {}));
 /**
+ * Registers a secret which will get masked from logs
+ *
+ * @param secret - Value of the secret to be masked
+ * @remarks
+ * This function instructs the Actions runner to mask the specified value in any
+ * logs produced during the workflow run. Once registered, the secret value will
+ * be replaced with asterisks (***) whenever it appears in console output, logs,
+ * or error messages.
+ *
+ * This is useful for protecting sensitive information such as:
+ * - API keys
+ * - Access tokens
+ * - Authentication credentials
+ * - URL parameters containing signatures (SAS tokens)
+ *
+ * Note that masking only affects future logs; any previous appearances of the
+ * secret in logs before calling this function will remain unmasked.
+ *
+ * @example
+ * ```typescript
+ * // Register an API token as a secret
+ * const apiToken = "abc123xyz456";
+ * setSecret(apiToken);
+ *
+ * // Now any logs containing this value will show *** instead
+ * console.log(`Using token: ${apiToken}`); // Outputs: "Using token: ***"
+ * ```
+ */
+function setSecret(secret) {
+    issueCommand('add-mask', {}, secret);
+}
+/**
  * Gets the value of an input.
  * Unless trimWhitespace is set to false in InputOptions, the value is also trimmed.
  * Returns an empty string if the value is not defined.
@@ -28805,12 +28837,14 @@ function info(message) {
  *
  * @param args The arguments passed to git.
  * @param cwd The working directory.
+ * @param env Additional environment variables.
  * @returns The standard output of the command.
  */
-async function git(args, cwd) {
+async function git(args, cwd, env = {}) {
     return new Promise((resolve, reject) => {
         const child = spawn("git", args, {
             cwd,
+            env: { ...process.env, ...env },
             stdio: ["ignore", "pipe", "pipe"],
         });
         const stdout = [];
@@ -28916,6 +28950,81 @@ async function getHeadSha(cwd) {
 async function getHeadTreeSha(cwd) {
     const output = await git(["rev-parse", "HEAD^{tree}"], cwd);
     return output.toString("utf8").trim();
+}
+/**
+ * Builds environment variables that make git authenticate with the token.
+ * They are passed via environment variables instead of command line arguments,
+ * so that the token doesn't appear in the process list.
+ * The existing extra headers (e.g. persisted by actions/checkout) are reset,
+ * because duplicated Authorization headers are rejected.
+ *
+ * @param serverUrl The URL of the GitHub server, e.g. "https://github.com".
+ * @param token The token.
+ * @returns The environment variables.
+ */
+function authEnv(serverUrl, token) {
+    const key = `http.${serverUrl.replace(/\/+$/, "")}/.extraheader`;
+    const credential = Buffer.from(`x-access-token:${token}`).toString("base64");
+    return {
+        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_KEY_0: key,
+        GIT_CONFIG_VALUE_0: "", // an empty value resets the list of extra headers.
+        GIT_CONFIG_KEY_1: key,
+        GIT_CONFIG_VALUE_1: `AUTHORIZATION: basic ${credential}`,
+    };
+}
+/**
+ * Fetches a commit from the remote repository.
+ *
+ * @param cwd The working directory.
+ * @param url The URL of the remote repository.
+ * @param sha The SHA of the commit.
+ * @param ref The local ref that will point to the commit, e.g. "refs/remotes/origin/main".
+ * @param env Additional environment variables, e.g. authEnv().
+ */
+async function fetchCommit(cwd, url, sha, ref, env = {}) {
+    await git([
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-recurse-submodules",
+        url,
+        `+${sha}:${ref}`,
+    ], cwd, env);
+}
+/**
+ * Checks out a commit, keeping the working tree as is.
+ * The working tree already contains the changes of the commit,
+ * so only HEAD and the index are updated.
+ *
+ * If the current branch is `branch`, the branch is moved to the commit.
+ * Otherwise, HEAD is detached at the commit.
+ *
+ * @param cwd The working directory.
+ * @param sha The SHA of the commit.
+ * @param branch The branch that the commit was created on.
+ */
+async function checkoutCommit(cwd, sha, branch) {
+    if ((await getCurrentBranch(cwd)) !== branch) {
+        // detaching at the current HEAD doesn't touch the working tree.
+        await git(["checkout", "--quiet", "--detach"], cwd);
+    }
+    await git(["reset", "--quiet", "--mixed", sha], cwd);
+}
+/**
+ * Gets the name of the current branch.
+ *
+ * @param cwd The working directory.
+ * @returns The name of the current branch, or undefined if HEAD is detached.
+ */
+async function getCurrentBranch(cwd) {
+    try {
+        const output = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd);
+        return output.toString("utf8").trim();
+    }
+    catch {
+        return undefined;
+    }
 }
 
 /** A minimal client of GitHub GraphQL API and REST API. */
@@ -29281,6 +29390,21 @@ async function commitWithGitDatabase(options, client, changes) {
     return created;
 }
 /**
+ * Fetches the commit created by the API, and checks it out.
+ * After that, HEAD points to the commit and the working tree is clean
+ * (except changes that are not committed, e.g. outside of the working directory).
+ *
+ * @param options The options.
+ * @param sha The SHA of the commit.
+ */
+async function checkout(options, sha) {
+    const cwd = options.workingDirectory;
+    info(`fetching ${sha}`);
+    await fetchCommit(cwd, options.remoteUrl, sha, `refs/remotes/origin/${options.headBranch}`, options.env);
+    await checkoutCommit(cwd, sha, options.headBranch);
+    info(`checked out ${sha}`);
+}
+/**
  * The main function for the action.
  *
  * @returns Resolves when the action is complete.
@@ -29288,6 +29412,7 @@ async function commitWithGitDatabase(options, client, changes) {
 async function run() {
     try {
         const token = getInput("github-token", { required: true });
+        setSecret(token);
         const baseBranch = getInput("base-branch", { required: true });
         const headBranch = getInput("head-branch") || baseBranch;
         const commitMessage = getInput("commit-message") ||
@@ -29301,6 +29426,13 @@ async function run() {
         if (created) {
             setOutput("commit-url", created.url);
             setOutput("commit-sha", created.oid);
+            const serverUrl = (process.env.GITHUB_SERVER_URL || "https://github.com").replace(/\/+$/, "");
+            await checkout({
+                workingDirectory,
+                headBranch,
+                remoteUrl: `${serverUrl}/${repository}`,
+                env: authEnv(serverUrl, token),
+            }, created.oid);
         }
     }
     catch (error) {

@@ -3,6 +3,9 @@ import * as path from "node:path";
 import {
   FileMode,
   StagedChange,
+  authEnv,
+  checkoutCommit,
+  fetchCommit,
   getHeadSha,
   getHeadTreeSha,
   getStagedChanges,
@@ -250,6 +253,42 @@ async function commitWithGitDatabase(
   return created;
 }
 
+/** Options of the checkout after the commit. */
+export interface CheckoutOptions {
+  workingDirectory: string;
+  /** The branch that the commit was created on. */
+  headBranch: string;
+  /** The URL of the remote repository, e.g. "https://github.com/octocat/hello-world". */
+  remoteUrl: string;
+  /** Additional environment variables for git fetch, e.g. authEnv(). */
+  env?: Record<string, string>;
+}
+
+/**
+ * Fetches the commit created by the API, and checks it out.
+ * After that, HEAD points to the commit and the working tree is clean
+ * (except changes that are not committed, e.g. outside of the working directory).
+ *
+ * @param options The options.
+ * @param sha The SHA of the commit.
+ */
+export async function checkout(
+  options: CheckoutOptions,
+  sha: string,
+): Promise<void> {
+  const cwd = options.workingDirectory;
+  core.info(`fetching ${sha}`);
+  await fetchCommit(
+    cwd,
+    options.remoteUrl,
+    sha,
+    `refs/remotes/origin/${options.headBranch}`,
+    options.env,
+  );
+  await checkoutCommit(cwd, sha, options.headBranch);
+  core.info(`checked out ${sha}`);
+}
+
 /**
  * The main function for the action.
  *
@@ -258,6 +297,7 @@ async function commitWithGitDatabase(
 export async function run(): Promise<void> {
   try {
     const token = core.getInput("github-token", { required: true });
+    core.setSecret(token);
     const baseBranch = core.getInput("base-branch", { required: true });
     const headBranch = core.getInput("head-branch") || baseBranch;
     const commitMessage =
@@ -278,6 +318,19 @@ export async function run(): Promise<void> {
     if (created) {
       core.setOutput("commit-url", created.url);
       core.setOutput("commit-sha", created.oid);
+
+      const serverUrl = (
+        process.env.GITHUB_SERVER_URL || "https://github.com"
+      ).replace(/\/+$/, "");
+      await checkout(
+        {
+          workingDirectory,
+          headBranch,
+          remoteUrl: `${serverUrl}/${repository}`,
+          env: authEnv(serverUrl, token),
+        },
+        created.oid,
+      );
     }
   } catch (error) {
     if (error instanceof Error) {

@@ -1,4 +1,4 @@
-import { parseRawDiff } from "../src/git.js";
+import { authEnv, parseRawDiff } from "../src/git.js";
 
 describe("parseRawDiff", () => {
   it("parses an empty output", () => {
@@ -45,5 +45,17 @@ describe("parseRawDiff", () => {
 
   it("throws on unexpected output", () => {
     expect(() => parseRawDiff("foo\0bar\0")).toThrow(/unexpected output/);
+  });
+});
+
+describe("authEnv", () => {
+  it("resets existing extra headers and adds the token", () => {
+    expect(authEnv("https://github.com/", "secret")).toEqual({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_CONFIG_VALUE_0: "",
+      GIT_CONFIG_KEY_1: "http.https://github.com/.extraheader",
+      GIT_CONFIG_VALUE_1: `AUTHORIZATION: basic ${Buffer.from("x-access-token:secret").toString("base64")}`,
+    });
   });
 });
