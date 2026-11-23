@@ -37,6 +37,11 @@ export declare function isRegularFileChange(change: StagedChange): boolean;
  * symbolic links or submodules are involved), it is created by the Git
  * Database REST API, because the mutation doesn't support file modes.
  *
+ * If a merge is in progress (e.g. after `git merge --no-commit`), a merge commit
+ * is created by the Git Database REST API, because the mutation doesn't support
+ * multiple parents. The commits in MERGE_HEAD become the other parents.
+ * The merge commit is created even if the merge result has no changes from HEAD.
+ *
  * @param options The options.
  * @param client The GitHub API client.
  * @returns The commit created, or undefined if there are no changes.

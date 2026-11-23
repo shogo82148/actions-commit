@@ -109,3 +109,68 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # the action creates a merge commit if a merge is in progress.
+  test-merge:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    env:
+      HEAD_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}-merge"
+      SIDE_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}-merge-side"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # the commit being merged must exist on GitHub, so create it with the action.
+      - name: make some changes on the side branch
+        run: ./testdata/update.sh
+        shell: bash
+      - id: side
+        uses: $/
+        with:
+          head-branch: ${{ env.SIDE_BRANCH }}
+      - name: merge the side branch
+        run: |
+          git checkout --quiet --detach "$GITHUB_SHA"
+          git -c user.name=actions-commit -c user.email=actions-commit@example.com \
+            merge --no-ff --no-commit "$SIDE_BRANCH"
+          echo 'UPDATED IN THE MERGE!!' >> testdata/update-me.txt
+        shell: bash
+      - id: commit
+        uses: $/
+        with:
+          head-branch: ${{ env.HEAD_BRANCH }}
+      - name: verify
+        run: ./testdata/verify.sh "$COMMIT_SHA" "$HEAD_BRANCH"
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ steps.commit.outputs.commit-sha }}
+          GH_TOKEN: ${{ github.token }}
+      - name: verify the merge commit
+        run: |
+          PARENTS=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$COMMIT_SHA" --jq '[.parents[].sha] | join(" ")')
+          if [[ "$PARENTS" != "$GITHUB_SHA $SIDE_SHA" ]]; then
+            echo "::error::unexpected parents. expected: $GITHUB_SHA $SIDE_SHA, actual: $PARENTS"
+            exit 1
+          fi
+          if git rev-parse --quiet --verify MERGE_HEAD; then
+            echo "::error::the merge is still in progress."
+            exit 1
+          fi
+          echo "merge commit is OK."
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ steps.commit.outputs.commit-sha }}
+          SIDE_SHA: ${{ steps.side.outputs.commit-sha }}
+          GH_TOKEN: ${{ github.token }}
+      - name: cleanup
+        if: always()
+        run: |
+          ./testdata/cleanup.sh "$HEAD_BRANCH"
+          ./testdata/cleanup.sh "$SIDE_BRANCH"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}

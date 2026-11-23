@@ -8,7 +8,10 @@ import {
   fetchCommit,
   getHeadSha,
   getHeadTreeSha,
+  getMergeHeads,
+  getMergeMessage,
   getStagedChanges,
+  getUnmergedPaths,
   readBlob,
   stageAll,
   unstageAll,
@@ -92,6 +95,11 @@ export function isRegularFileChange(change: StagedChange): boolean {
  * symbolic links or submodules are involved), it is created by the Git
  * Database REST API, because the mutation doesn't support file modes.
  *
+ * If a merge is in progress (e.g. after `git merge --no-commit`), a merge commit
+ * is created by the Git Database REST API, because the mutation doesn't support
+ * multiple parents. The commits in MERGE_HEAD become the other parents.
+ * The merge commit is created even if the merge result has no changes from HEAD.
+ *
  * @param options The options.
  * @param client The GitHub API client.
  * @returns The commit created, or undefined if there are no changes.
@@ -101,23 +109,41 @@ export async function commit(
   client: Client,
 ): Promise<Commit | undefined> {
   const cwd = options.workingDirectory;
+  const mergeHeads = await getMergeHeads(cwd);
+  if (mergeHeads.length > 0) {
+    core.info(`merging ${mergeHeads.join(", ")}`);
+  }
+
+  // conflicts under the working directory are resolved by staging them,
+  // in the same way as `git commit -a`. the others must be resolved beforehand.
+  const inside = new Set(await getUnmergedPaths(cwd, "."));
+  const outside = (await getUnmergedPaths(cwd, ":/")).filter(
+    (p) => !inside.has(p),
+  );
+  if (outside.length > 0) {
+    throw new Error(
+      `unmerged files outside of the working directory: ${outside.join(", ")}. ` +
+        "Resolve the conflicts and stage them before committing.",
+    );
+  }
 
   await stageAll(cwd);
   try {
     const changes = await getStagedChanges(cwd);
-    if (changes.length === 0) {
+    if (changes.length === 0 && mergeHeads.length === 0) {
       core.info("No changes to commit.");
       return undefined;
     }
 
-    const created = changes.every(isRegularFileChange)
-      ? await commitWithGraphQL(options, client, changes)
-      : await commitWithGitDatabase(options, client, changes);
+    const created =
+      mergeHeads.length === 0 && changes.every(isRegularFileChange)
+        ? await commitWithGraphQL(options, client, changes)
+        : await commitWithGitDatabase(options, client, changes, mergeHeads);
     core.info(`created: ${created.url}`);
     if (!created.verified) {
       core.warning(
         `the commit ${created.oid} is not verified. ` +
-          "If the change includes executable files, symbolic links or submodules, " +
+          "If the change includes executable files, symbolic links or submodules, or the commit is a merge commit, " +
           "the commit is not signed when the token authenticates as a user (e.g. a personal access token). Use GITHUB_TOKEN or a GitHub App token instead.",
       );
     }
@@ -174,6 +200,7 @@ async function commitWithGitDatabase(
   options: CommitOptions,
   client: Client,
   changes: StagedChange[],
+  mergeHeads: string[],
 ): Promise<Commit> {
   const cwd = options.workingDirectory;
   const repository = options.repository;
@@ -233,15 +260,20 @@ async function commitWithGitDatabase(
 
   const headSha = await getHeadSha(cwd);
   const baseTree = await getHeadTreeSha(cwd);
-  const treeSha = await client.createTree(repository, baseTree, tree);
+  // a merge commit may have the same tree as HEAD (e.g. `git merge -s ours`).
+  const treeSha =
+    tree.length === 0
+      ? baseTree
+      : await client.createTree(repository, baseTree, tree);
 
   const { headline, body } = splitCommitMessage(options.commitMessage);
   const message = body === undefined ? headline : `${headline}\n\n${body}`;
   core.info(
-    `creating a commit on ${options.headBranch} using the Git Database API`,
+    `creating a ${mergeHeads.length > 0 ? "merge commit" : "commit"} on ${options.headBranch} using the Git Database API`,
   );
   const created = await client.createCommit(repository, message, treeSha, [
     headSha,
+    ...mergeHeads,
   ]);
 
   if (options.headBranch !== options.baseBranch) {
@@ -300,12 +332,13 @@ export async function run(): Promise<void> {
     core.setSecret(token);
     const baseBranch = core.getInput("base-branch", { required: true });
     const headBranch = core.getInput("head-branch") || baseBranch;
-    const commitMessage =
-      core.getInput("commit-message") ||
-      `Auto updates by the ${process.env.GITHUB_WORKFLOW ?? ""} workflow`;
     const workingDirectory = path.resolve(
       core.getInput("working-directory") || ".",
     );
+    const commitMessage =
+      core.getInput("commit-message") ||
+      (await getMergeMessage(workingDirectory)) ||
+      `Auto updates by the ${process.env.GITHUB_WORKFLOW ?? ""} workflow`;
     const repository = process.env.GITHUB_REPOSITORY;
     if (!repository) {
       throw new Error("GITHUB_REPOSITORY is not set");
