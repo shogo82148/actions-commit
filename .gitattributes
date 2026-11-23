@@ -1,1 +1,3 @@
-dist/** -diff linguist-generated=true 
+dist/** -diff linguist-generated=true
+# the test scripts are run by bash on Windows too, which rejects CRLF.
+*.sh text eol=lf
