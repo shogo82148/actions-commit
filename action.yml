@@ -13,7 +13,7 @@ inputs:
     description: "The head branch. The default is same as base-branch."
     required: false
   commit-message:
-    description: 'The commit message. The default is "Auto updates by the $GITHUB_WORKFLOW workflow".'
+    description: 'The commit message. The default is the message prepared by `git merge` if a merge is in progress, or "Auto updates by the $GITHUB_WORKFLOW workflow" otherwise.'
     required: false
   working-directory:
     description: "The working directory"

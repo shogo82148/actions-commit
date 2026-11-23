@@ -241,6 +241,153 @@ describe("commit", () => {
     expect(staged.toString()).toBe("");
   });
 
+  describe("merge", () => {
+    const options = (workingDirectory: string) => ({
+      repository: "o/r",
+      baseBranch: "main",
+      headBranch: "main",
+      commitMessage: "Merge branch 'side'",
+      workingDirectory,
+    });
+
+    async function rev(ref: string): Promise<string> {
+      return (await git(["rev-parse", ref], dir)).toString().trim();
+    }
+
+    // creates the branch "side" that updates the file, and goes back to main.
+    async function prepareSide(file: string, contents: string) {
+      await git(["checkout", "--quiet", "-b", "side"], dir);
+      await fs.writeFile(path.join(dir, file), contents);
+      await git(["add", "."], dir);
+      await git([...gitConfig, "commit", "--quiet", "-m", "side"], dir);
+      await git(["checkout", "--quiet", "main"], dir);
+      return rev("side");
+    }
+
+    // a merge with conflicts exits with a non-zero code, so it is ignored.
+    async function merge(...args: string[]) {
+      await git([...gitConfig, "merge", "--quiet", ...args], dir).catch(
+        () => {},
+      );
+    }
+
+    async function mergeHeadExists(): Promise<boolean> {
+      const out = await git(["rev-parse", "--git-path", "MERGE_HEAD"], dir);
+      return fs
+        .access(path.resolve(dir, out.toString().trim()))
+        .then(() => true)
+        .catch(() => false);
+    }
+
+    it("creates a merge commit", async () => {
+      const side = await prepareSide("side.txt", "side\n");
+      // make main diverge from side.
+      await fs.writeFile(path.join(dir, "main.txt"), "main\n");
+      await git(["add", "."], dir);
+      await git([...gitConfig, "commit", "--quiet", "-m", "main"], dir);
+      const head = await rev("HEAD");
+      const headTree = await rev("HEAD^{tree}");
+
+      await merge("--no-commit", "--no-ff", "side");
+      // additional changes are also included in the merge commit.
+      await fs.appendFile(path.join(dir, "update-me.txt"), "UPDATED!!\n");
+
+      const { client, blobs } = fakeClient();
+      const result = await commit(options(dir), client);
+
+      expect(result?.oid).toBe("beef");
+      expect(client.createCommitOnBranch).not.toHaveBeenCalled();
+      const [, baseTree, tree] = client.createTree.mock.calls[0];
+      expect(baseTree).toBe(headTree);
+      expect(
+        Object.fromEntries(tree.map((e) => [e.path, blobs.get(e.sha ?? "")])),
+      ).toEqual({
+        "side.txt": "side\n",
+        "update-me.txt": "please update me!\nUPDATED!!\n",
+      });
+      expect(client.createCommit).toHaveBeenCalledWith(
+        "o/r",
+        "Merge branch 'side'",
+        "tree0",
+        [head, side],
+      );
+      expect(client.updateRef).toHaveBeenCalledWith("o/r", "main", "beef");
+    });
+
+    it("creates a merge commit without changes", async () => {
+      const side = await prepareSide("side.txt", "side\n");
+      const head = await rev("HEAD");
+      const headTree = await rev("HEAD^{tree}");
+      await merge("--no-commit", "-s", "ours", "side");
+
+      const { client } = fakeClient();
+      const result = await commit(
+        { ...options(dir), headBranch: "topic" },
+        client,
+      );
+
+      expect(result?.oid).toBe("beef");
+      expect(client.createTree).not.toHaveBeenCalled();
+      expect(client.createCommit).toHaveBeenCalledWith(
+        "o/r",
+        "Merge branch 'side'",
+        headTree,
+        [head, side],
+      );
+      expect(client.createRef).toHaveBeenCalledWith("o/r", "topic", "beef");
+    });
+
+    it("resolves conflicts under the working directory", async () => {
+      const side = await prepareSide("update-me.txt", "side\n");
+      await fs.writeFile(path.join(dir, "update-me.txt"), "main\n");
+      await git([...gitConfig, "commit", "--quiet", "-am", "main"], dir);
+      const head = await rev("HEAD");
+
+      await merge("side");
+      expect(await mergeHeadExists()).toBe(true);
+      // resolve the conflict without staging it.
+      await fs.writeFile(path.join(dir, "update-me.txt"), "resolved\n");
+
+      const { client, blobs } = fakeClient();
+      await commit(options(dir), client);
+
+      const tree = client.createTree.mock.calls[0][2];
+      expect(tree.map((e) => [e.path, blobs.get(e.sha ?? "")])).toEqual([
+        ["update-me.txt", "resolved\n"],
+      ]);
+      expect(client.createCommit.mock.calls[0][3]).toEqual([head, side]);
+    });
+
+    it("fails if conflicts remain outside of the working directory", async () => {
+      await prepareSide("update-me.txt", "side\n");
+      await fs.writeFile(path.join(dir, "update-me.txt"), "main\n");
+      await git([...gitConfig, "commit", "--quiet", "-am", "main"], dir);
+      await merge("side");
+
+      const { client } = fakeClient();
+      await expect(
+        commit(options(path.join(dir, "sub")), client),
+      ).rejects.toThrow(/unmerged files .*: update-me\.txt/);
+      expect(client.createCommit).not.toHaveBeenCalled();
+
+      // the merge in progress is kept as is.
+      expect(await mergeHeadExists()).toBe(true);
+      const unmerged = await git(["ls-files", "--unmerged"], dir);
+      expect(unmerged.toString()).not.toBe("");
+    });
+
+    it("keeps the merge in progress if the API fails", async () => {
+      await prepareSide("side.txt", "side\n");
+      await merge("--no-commit", "--no-ff", "side");
+
+      const { client } = fakeClient();
+      client.createCommit.mockRejectedValueOnce(new Error("boom"));
+      await expect(commit(options(dir), client)).rejects.toThrow("boom");
+
+      expect(await mergeHeadExists()).toBe(true);
+    });
+  });
+
   describe("file modes", () => {
     // Windows has no executable bits, and creating symbolic links needs a privilege.
     // So git for Windows doesn't read them from the working tree (core.fileMode=false, core.symlinks=false),
@@ -528,6 +675,28 @@ describe("checkout", () => {
 
     expect(await currentBranch()).toBe("main");
     expect(await rev("refs/heads/main")).toBe(sha);
+    expect(await status()).toBe("");
+  });
+
+  it("clears the merge in progress", async () => {
+    // merge a commit that has the same changes as the remote commit.
+    const side = await createRemoteCommit("side", changes);
+    await git(["fetch", "--quiet", "origin"], dir);
+    await git(
+      [...gitConfig, "merge", "--quiet", "--no-commit", "--no-ff", side],
+      dir,
+    );
+    const sha = await createRemoteCommit("main", changes);
+
+    await checkout(
+      { workingDirectory: dir, headBranch: "main", remoteUrl: remote },
+      sha,
+    );
+
+    expect(await rev("HEAD")).toBe(sha);
+    await expect(
+      git(["rev-parse", "--verify", "MERGE_HEAD"], dir),
+    ).rejects.toThrow();
     expect(await status()).toBe("");
   });
 

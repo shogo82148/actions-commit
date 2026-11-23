@@ -153,10 +153,117 @@ export async function stageAll(cwd: string): Promise<void> {
 /**
  * Unstages all changes.
  *
+ * The pathspec ":/" (the whole repository) is given on purpose.
+ * `git reset` without pathspecs also aborts the merge in progress
+ * (it removes MERGE_HEAD, MERGE_MSG, etc.), but the merge state must be kept,
+ * so that the user can retry the commit if creating it fails.
+ * The merge state is cleared by the checkout after the commit is created.
+ *
  * @param cwd The working directory.
  */
 export async function unstageAll(cwd: string): Promise<void> {
-  await git(["reset", "--quiet", "HEAD"], cwd);
+  await git(["reset", "--quiet", "HEAD", "--", ":/"], cwd);
+}
+
+/**
+ * Lists the paths that have unmerged (conflicted) entries in the index.
+ *
+ * @param cwd The working directory.
+ * @param pathspec The pathspec, e.g. "." for the working directory, ":/" for the whole repository.
+ * @returns The paths relative to the repository root, without duplicates.
+ */
+export async function getUnmergedPaths(
+  cwd: string,
+  pathspec: string,
+): Promise<string[]> {
+  const output = await git(
+    ["ls-files", "--unmerged", "--full-name", "-z", "--", pathspec],
+    cwd,
+  );
+  const paths = new Set<string>();
+  for (const line of output.toString("utf8").split("\0")) {
+    // e.g. "100644 <sha> 1\tpath"
+    const idx = line.indexOf("\t");
+    if (idx >= 0) {
+      paths.add(line.slice(idx + 1));
+    }
+  }
+  return [...paths];
+}
+
+/**
+ * Resolves the path of a file in the git directory, e.g. ".git/MERGE_HEAD".
+ *
+ * @param name The name of the file.
+ * @param cwd The working directory.
+ * @returns The absolute path of the file.
+ */
+async function gitPath(name: string, cwd: string): Promise<string> {
+  const output = await git(["rev-parse", "--git-path", name], cwd);
+  return path.resolve(cwd, output.toString("utf8").trim());
+}
+
+/**
+ * Reads a file in the git directory.
+ *
+ * @param name The name of the file.
+ * @param cwd The working directory.
+ * @returns The contents of the file, or undefined if it doesn't exist.
+ */
+async function readGitFile(
+  name: string,
+  cwd: string,
+): Promise<string | undefined> {
+  try {
+    return await fs.readFile(await gitPath(name, cwd), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Lists the commits being merged, i.e. the contents of MERGE_HEAD.
+ * They are written by `git merge --no-commit` or by a merge stopped by conflicts.
+ * An octopus merge has two or more commits.
+ *
+ * @param cwd The working directory.
+ * @returns The SHAs of the commits, or an empty list if no merge is in progress.
+ */
+export async function getMergeHeads(cwd: string): Promise<string[]> {
+  const contents = await readGitFile("MERGE_HEAD", cwd);
+  if (contents === undefined) {
+    return [];
+  }
+  return contents
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+/**
+ * Reads the commit message prepared by `git merge`, i.e. the contents of MERGE_MSG.
+ * Comment lines (e.g. the list of conflicts) are removed.
+ *
+ * @param cwd The working directory.
+ * @returns The message, or undefined if there is no message.
+ */
+export async function getMergeMessage(
+  cwd: string,
+): Promise<string | undefined> {
+  const contents = await readGitFile("MERGE_MSG", cwd);
+  if (contents === undefined) {
+    return undefined;
+  }
+  const message = contents
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => !line.startsWith("#"))
+    .join("\n")
+    .trim();
+  return message === "" ? undefined : message;
 }
 
 /**
@@ -283,6 +390,8 @@ export async function fetchCommit(
  * The working tree already contains the changes of the commit,
  * so only the branch, HEAD and the index are updated.
  * Changes that are not included in the commit are kept in the working tree.
+ * The merge in progress (MERGE_HEAD, etc.) is cleared by `git reset`,
+ * because the commit has been created.
  *
  * The local branch is created if it doesn't exist, or reset to the commit if it exists.
  * The upstream of the branch is set to the remote-tracking branch `origin/<branch>`.

@@ -43,6 +43,33 @@ How the commit is created depends on the changes.
   but the commit created with a token that authenticates as a user (e.g. a personal access token) is not signed.
   See [Signature verification for bots](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#signature-verification-for-bots).
   The action shows a warning if the commit is not verified.
+- If a merge is in progress, a merge commit is created by the Git Database REST API in the same way. See [Merge commits](#merge-commits).
+
+### Merge commits
+
+The action creates a merge commit if a merge is in progress, i.e. `MERGE_HEAD` exists
+(e.g. after `git merge --no-commit`, or a merge stopped by conflicts).
+The parents of the merge commit are `HEAD` and the commits in `MERGE_HEAD`, and the tree is the working tree as usual.
+
+```yaml
+- uses: actions/checkout@v7
+  with:
+    fetch-depth: 0
+- name: merge
+  run: |
+    git -c user.name=github-actions -c user.email=github-actions@github.com \
+      merge --no-ff --no-commit origin/feature
+- name: commit
+  uses: shogo82148/actions-commit@v1
+```
+
+- The commits being merged must exist on GitHub, because the merge commit is created by the API.
+- Conflicts under `working-directory` are resolved by staging the working tree, like `git commit -a`.
+  The action fails if conflicts remain outside of `working-directory`.
+- If `commit-message` is not given, the message prepared by `git merge` (`MERGE_MSG`) is used.
+- The merge commit is created even if the merge result has no changes from `HEAD` (e.g. `git merge -s ours`).
+- As described above, the merge commit is signed with `${{ github.token }}` or a GitHub App token, but not with a personal access token.
+- The merge in progress is cleared after the commit is checked out. If the action fails, it is kept.
 
 ## Inputs
 
@@ -61,7 +88,7 @@ The head branch. The default is same as `base-branch`.
 ### commit-message
 
 The commit message.
-The default is "Auto updates by the $GITHUB_WORKFLOW workflow".
+The default is the message prepared by `git merge` if a merge is in progress, or "Auto updates by the $GITHUB_WORKFLOW workflow" otherwise.
 If the message has multiple lines, the first line is used as the headline, and the rest is used as the body.
 
 ### working-directory

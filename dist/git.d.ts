@@ -55,9 +55,40 @@ export declare function stageAll(cwd: string): Promise<void>;
 /**
  * Unstages all changes.
  *
+ * The pathspec ":/" (the whole repository) is given on purpose.
+ * `git reset` without pathspecs also aborts the merge in progress
+ * (it removes MERGE_HEAD, MERGE_MSG, etc.), but the merge state must be kept,
+ * so that the user can retry the commit if creating it fails.
+ * The merge state is cleared by the checkout after the commit is created.
+ *
  * @param cwd The working directory.
  */
 export declare function unstageAll(cwd: string): Promise<void>;
+/**
+ * Lists the paths that have unmerged (conflicted) entries in the index.
+ *
+ * @param cwd The working directory.
+ * @param pathspec The pathspec, e.g. "." for the working directory, ":/" for the whole repository.
+ * @returns The paths relative to the repository root, without duplicates.
+ */
+export declare function getUnmergedPaths(cwd: string, pathspec: string): Promise<string[]>;
+/**
+ * Lists the commits being merged, i.e. the contents of MERGE_HEAD.
+ * They are written by `git merge --no-commit` or by a merge stopped by conflicts.
+ * An octopus merge has two or more commits.
+ *
+ * @param cwd The working directory.
+ * @returns The SHAs of the commits, or an empty list if no merge is in progress.
+ */
+export declare function getMergeHeads(cwd: string): Promise<string[]>;
+/**
+ * Reads the commit message prepared by `git merge`, i.e. the contents of MERGE_MSG.
+ * Comment lines (e.g. the list of conflicts) are removed.
+ *
+ * @param cwd The working directory.
+ * @returns The message, or undefined if there is no message.
+ */
+export declare function getMergeMessage(cwd: string): Promise<string | undefined>;
 /**
  * Lists the staged changes.
  *
@@ -120,6 +151,8 @@ export declare function fetchCommit(cwd: string, url: string, sha: string, ref: 
  * The working tree already contains the changes of the commit,
  * so only the branch, HEAD and the index are updated.
  * Changes that are not included in the commit are kept in the working tree.
+ * The merge in progress (MERGE_HEAD, etc.) is cleared by `git reset`,
+ * because the commit has been created.
  *
  * The local branch is created if it doesn't exist, or reset to the commit if it exists.
  * The upstream of the branch is set to the remote-tracking branch `origin/<branch>`.

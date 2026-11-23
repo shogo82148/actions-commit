@@ -2,7 +2,14 @@ import { jest } from "@jest/globals";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { authEnv, git, parseRawDiff, readBlob } from "../src/git.js";
+import {
+  authEnv,
+  getMergeHeads,
+  getMergeMessage,
+  git,
+  parseRawDiff,
+  readBlob,
+} from "../src/git.js";
 
 describe("parseRawDiff", () => {
   it("parses an empty output", () => {
@@ -128,6 +135,36 @@ describe("git", () => {
     await expect(git(["rev-parse", "no-such-ref"], dir)).rejects.toThrow(
       /git rev-parse no-such-ref failed with exit code 128: .*no-such-ref/s,
     );
+  });
+
+  describe("merge state", () => {
+    beforeEach(async () => {
+      await fs.mkdir(path.join(dir, "sub"));
+    });
+
+    it("returns nothing if no merge is in progress", async () => {
+      expect(await getMergeHeads(dir)).toEqual([]);
+      expect(await getMergeMessage(dir)).toBeUndefined();
+    });
+
+    it("reads MERGE_HEAD and MERGE_MSG from a subdirectory", async () => {
+      const a = "a".repeat(40);
+      const b = "b".repeat(40);
+      await fs.writeFile(path.join(dir, ".git", "MERGE_HEAD"), `${a}\n${b}\n`);
+      await fs.writeFile(
+        path.join(dir, ".git", "MERGE_MSG"),
+        "Merge branches 'a' and 'b'\r\n\r\n# Conflicts:\r\n#\tfoo.txt\r\n",
+      );
+
+      const sub = path.join(dir, "sub");
+      expect(await getMergeHeads(sub)).toEqual([a, b]);
+      expect(await getMergeMessage(sub)).toBe("Merge branches 'a' and 'b'");
+    });
+
+    it("ignores an empty MERGE_MSG", async () => {
+      await fs.writeFile(path.join(dir, ".git", "MERGE_MSG"), "# comment\n");
+      expect(await getMergeMessage(dir)).toBeUndefined();
+    });
   });
 
   describe("debug log", () => {
