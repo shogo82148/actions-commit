@@ -96,6 +96,9 @@ describe("GitHubClient", () => {
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe("https://api.example.com/repos/o/r/git/commits");
     expect(init?.method).toBe("POST");
+    expect(
+      (init?.headers as Record<string, string>)["X-GitHub-Api-Version"],
+    ).toBe("2026-03-10");
     // author and committer must not be set, so that GitHub signs the commit.
     expect(JSON.parse(init?.body as string)).toEqual({
       message: "msg",
