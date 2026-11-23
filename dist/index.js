@@ -32,6 +32,8 @@ import require$$1$5 from 'node:dns';
 import require$$5$3 from 'string_decoder';
 import 'child_process';
 import 'timers';
+import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -28739,6 +28741,12 @@ var ExitCode;
  */
 function getInput(name, options) {
     const val = process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`] || '';
+    if (options && options.required && !val) {
+        throw new Error(`Input required and not supplied: ${name}`);
+    }
+    if (options && options.trimWhitespace === false) {
+        return val;
+    }
     return val.trim();
 }
 /**
@@ -28769,13 +28777,6 @@ function setFailed(message) {
     error(message);
 }
 /**
- * Writes debug message to user log
- * @param message debug message
- */
-function debug(message) {
-    issueCommand('debug', {}, message);
-}
-/**
  * Adds an error issue
  * @param message error issue message. Errors will be converted to string via toString()
  * @param properties optional properties to add to the annotation.
@@ -28783,22 +28784,306 @@ function debug(message) {
 function error(message, properties = {}) {
     issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
-
 /**
- * Waits for a number of milliseconds.
- *
- * @param milliseconds The number of milliseconds to wait.
- * @returns Resolves with 'done!' after the wait is over.
+ * Adds a warning issue
+ * @param message warning issue message. Errors will be converted to string via toString()
+ * @param properties optional properties to add to the annotation.
  */
-async function wait(milliseconds) {
-    return new Promise((resolve) => {
-        if (isNaN(milliseconds)) {
-            throw new Error("milliseconds is not a number");
-        }
-        setTimeout(() => resolve("done!"), milliseconds);
-    });
+function warning(message, properties = {}) {
+    issueCommand('warning', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
+/**
+ * Writes info to log with console.log.
+ * @param message info message
+ */
+function info(message) {
+    process.stdout.write(message + os.EOL);
 }
 
+/**
+ * Runs a git command and returns its standard output.
+ *
+ * @param args The arguments passed to git.
+ * @param cwd The working directory.
+ * @returns The standard output of the command.
+ */
+async function git(args, cwd) {
+    return new Promise((resolve, reject) => {
+        const child = spawn("git", args, {
+            cwd,
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        const stdout = [];
+        const stderr = [];
+        child.stdout.on("data", (chunk) => stdout.push(chunk));
+        child.stderr.on("data", (chunk) => stderr.push(chunk));
+        child.on("error", reject);
+        child.on("close", (code) => {
+            if (code === 0) {
+                resolve(Buffer.concat(stdout));
+                return;
+            }
+            const message = Buffer.concat(stderr).toString("utf8").trim();
+            reject(new Error(`git ${args.join(" ")} failed with exit code ${code}: ${message}`));
+        });
+    });
+}
+/** File modes of git objects. */
+const FileMode = {
+    Regular: "100644",
+    Executable: "100755",
+    Symlink: "120000",
+    Submodule: "160000",
+    Missing: "000000",
+};
+/**
+ * Parses the output of `git diff --raw -z --no-renames`.
+ *
+ * @param output The output of the command.
+ * @returns The list of the changes.
+ */
+function parseRawDiff(output) {
+    const tokens = output.split("\0");
+    const changes = [];
+    for (let i = 0; i + 1 < tokens.length; i += 2) {
+        const meta = tokens[i];
+        const path = tokens[i + 1];
+        // e.g. ":100644 100644 <old sha> <new sha> M"
+        const m = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])\d*$/.exec(meta);
+        if (!m) {
+            throw new Error(`unexpected output of git diff: ${JSON.stringify(meta)}`);
+        }
+        changes.push({
+            path,
+            oldMode: m[1],
+            newMode: m[2],
+            newSha: m[4],
+            status: m[5],
+        });
+    }
+    return changes;
+}
+/**
+ * Stages all changes under the working directory.
+ *
+ * @param cwd The working directory.
+ */
+async function stageAll(cwd) {
+    await git(["add", "--all", "--", "."], cwd);
+}
+/**
+ * Unstages all changes.
+ *
+ * @param cwd The working directory.
+ */
+async function unstageAll(cwd) {
+    await git(["reset", "--quiet", "HEAD"], cwd);
+}
+/**
+ * Lists the staged changes.
+ *
+ * @param cwd The working directory.
+ * @returns The list of the staged changes.
+ */
+async function getStagedChanges(cwd) {
+    const output = await git(["diff", "--cached", "--raw", "-z", "--no-renames", "--no-abbrev"], cwd);
+    return parseRawDiff(output.toString("utf8"));
+}
+/**
+ * Reads the contents of a blob.
+ *
+ * @param sha The SHA of the blob.
+ * @param cwd The working directory.
+ * @returns The contents of the blob.
+ */
+async function readBlob(sha, cwd) {
+    return git(["cat-file", "blob", sha], cwd);
+}
+/**
+ * Resolves the commit SHA of HEAD.
+ *
+ * @param cwd The working directory.
+ * @returns The SHA of HEAD.
+ */
+async function getHeadSha(cwd) {
+    const output = await git(["rev-parse", "HEAD"], cwd);
+    return output.toString("utf8").trim();
+}
+
+/** A minimal client of GitHub GraphQL API. */
+class GitHubClient {
+    token;
+    endpoint;
+    fetch;
+    constructor(token, endpoint = process.env.GITHUB_GRAPHQL_URL ||
+        "https://api.github.com/graphql", fetchImpl = globalThis.fetch) {
+        this.token = token;
+        this.endpoint = endpoint;
+        this.fetch = fetchImpl;
+    }
+    /**
+     * Calls GitHub GraphQL API.
+     *
+     * @param query The GraphQL query.
+     * @param variables The variables of the query.
+     * @returns The data of the response.
+     */
+    async graphql(query, variables) {
+        const res = await this.fetch(this.endpoint, {
+            method: "POST",
+            headers: {
+                Authorization: `bearer ${this.token}`,
+                "Content-Type": "application/json",
+                Accept: "application/json",
+                "User-Agent": "shogo82148/actions-commit",
+            },
+            body: JSON.stringify({ query, variables }),
+        });
+        const text = await res.text();
+        if (!res.ok) {
+            throw new Error(`GitHub GraphQL API returned ${res.status} ${res.statusText}: ${text}`);
+        }
+        const json = JSON.parse(text);
+        if (json.errors && json.errors.length > 0) {
+            throw new Error(`GitHub GraphQL API returned errors: ${json.errors.map((e) => e.message).join("; ")}`);
+        }
+        if (json.data === undefined || json.data === null) {
+            throw new Error("GitHub GraphQL API returned no data");
+        }
+        return json.data;
+    }
+    /**
+     * Gets the node ID of a repository.
+     *
+     * @param nameWithOwner The repository name with owner, e.g. "octocat/hello-world".
+     * @returns The node ID of the repository.
+     */
+    async getRepositoryId(nameWithOwner) {
+        const [owner, name] = nameWithOwner.split("/", 2);
+        const data = await this.graphql(`query ($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) { id }
+      }`, { owner, name });
+        if (!data.repository) {
+            throw new Error(`repository ${nameWithOwner} is not found`);
+        }
+        return data.repository.id;
+    }
+    /**
+     * Creates a new branch.
+     *
+     * @param repositoryId The node ID of the repository.
+     * @param branch The name of the branch.
+     * @param oid The SHA of the commit that the branch points to.
+     */
+    async createBranch(repositoryId, branch, oid) {
+        await this.graphql(`mutation ($input: CreateRefInput!) {
+        createRef(input: $input) { clientMutationId }
+      }`, {
+            input: {
+                repositoryId,
+                name: `refs/heads/${branch}`,
+                oid,
+            },
+        });
+    }
+    /**
+     * Creates a new commit on a branch.
+     *
+     * @param input The input of the createCommitOnBranch mutation.
+     * @returns The commit created.
+     */
+    async createCommitOnBranch(input) {
+        const data = await this.graphql(`mutation ($input: CreateCommitOnBranchInput!) {
+        createCommitOnBranch(input: $input) {
+          commit { oid url }
+        }
+      }`, { input });
+        return data.createCommitOnBranch.commit;
+    }
+}
+
+/**
+ * Splits a commit message into its headline and body.
+ *
+ * @param message The commit message.
+ * @returns The headline and body.
+ */
+function splitCommitMessage(message) {
+    const normalized = message.replace(/\r\n/g, "\n").trim();
+    const idx = normalized.indexOf("\n");
+    if (idx < 0) {
+        return { headline: normalized };
+    }
+    const headline = normalized.slice(0, idx).trim();
+    const body = normalized.slice(idx + 1).trim();
+    return body === "" ? { headline } : { headline, body };
+}
+/**
+ * Commits all changes in the working directory via GitHub GraphQL API.
+ *
+ * @param options The options.
+ * @param client The GitHub API client.
+ * @returns The commit created, or undefined if there are no changes.
+ */
+async function commit(options, client) {
+    const cwd = options.workingDirectory;
+    await stageAll(cwd);
+    try {
+        const changes = await getStagedChanges(cwd);
+        if (changes.length === 0) {
+            info("No changes to commit.");
+            return undefined;
+        }
+        const additions = [];
+        const deletions = [];
+        for (const change of changes) {
+            if (change.status === "D" || change.newMode === FileMode.Missing) {
+                info(`delete: ${change.path}`);
+                deletions.push({ path: change.path });
+                continue;
+            }
+            switch (change.newMode) {
+                case FileMode.Submodule:
+                    throw new Error(`${change.path}: submodules are not supported by the createCommitOnBranch mutation`);
+                case FileMode.Symlink:
+                    warning(`${change.path}: symbolic links are not supported. it will be committed as a regular file.`);
+                    break;
+                case FileMode.Executable:
+                    if (change.oldMode !== FileMode.Executable) {
+                        warning(`${change.path}: the executable bit is not supported. it will be committed as a non-executable file.`);
+                    }
+                    break;
+            }
+            info(`add: ${change.path}`);
+            const contents = await readBlob(change.newSha, cwd);
+            additions.push({
+                path: change.path,
+                contents: contents.toString("base64"),
+            });
+        }
+        const headSha = await getHeadSha(cwd);
+        if (options.headBranch !== options.baseBranch) {
+            info(`creating a new branch ${options.headBranch} from ${headSha}`);
+            const repositoryId = await client.getRepositoryId(options.repository);
+            await client.createBranch(repositoryId, options.headBranch, headSha);
+        }
+        info(`creating a commit on ${options.headBranch}`);
+        const created = await client.createCommitOnBranch({
+            branch: {
+                repositoryNameWithOwner: options.repository,
+                branchName: options.headBranch,
+            },
+            expectedHeadOid: headSha,
+            fileChanges: { additions, deletions },
+            message: splitCommitMessage(options.commitMessage),
+        });
+        info(`created: ${created.url}`);
+        return created;
+    }
+    finally {
+        await unstageAll(cwd);
+    }
+}
 /**
  * The main function for the action.
  *
@@ -28806,16 +29091,29 @@ async function wait(milliseconds) {
  */
 async function run() {
     try {
-        const ms = getInput("milliseconds");
-        debug(`Waiting ${ms} milliseconds ...`); // debug is only output if you set the secret `ACTIONS_STEP_DEBUG` to true
-        debug(new Date().toTimeString());
-        await wait(parseInt(ms, 10));
-        debug(new Date().toTimeString());
-        setOutput("time", new Date().toTimeString());
+        const token = getInput("github-token", { required: true });
+        const baseBranch = getInput("base-branch", { required: true });
+        const headBranch = getInput("head-branch") || baseBranch;
+        const commitMessage = getInput("commit-message") ||
+            `Auto updates by the ${process.env.GITHUB_WORKFLOW ?? ""} workflow`;
+        const workingDirectory = path.resolve(getInput("working-directory") || ".");
+        const repository = process.env.GITHUB_REPOSITORY;
+        if (!repository) {
+            throw new Error("GITHUB_REPOSITORY is not set");
+        }
+        const created = await commit({ repository, baseBranch, headBranch, commitMessage, workingDirectory }, new GitHubClient(token));
+        if (created) {
+            setOutput("commit-url", created.url);
+            setOutput("commit-sha", created.oid);
+        }
     }
     catch (error) {
-        if (error instanceof Error)
+        if (error instanceof Error) {
             setFailed(error.message);
+        }
+        else {
+            setFailed(String(error));
+        }
     }
 }
 
