@@ -68,3 +68,10 @@ export declare function readBlob(sha: string, cwd: string): Promise<Buffer>;
  * @returns The SHA of HEAD.
  */
 export declare function getHeadSha(cwd: string): Promise<string>;
+/**
+ * Resolves the tree SHA of HEAD.
+ *
+ * @param cwd The working directory.
+ * @returns The SHA of the tree of HEAD.
+ */
+export declare function getHeadTreeSha(cwd: string): Promise<string>;

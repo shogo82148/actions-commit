@@ -1,3 +1,4 @@
+import { StagedChange } from "./git.js";
 import { Commit, GitHubClient } from "./github.js";
 /** Options of the commit. */
 export interface CommitOptions {
@@ -9,7 +10,7 @@ export interface CommitOptions {
     workingDirectory: string;
 }
 /** The subset of GitHubClient that commit() uses. */
-export type Client = Pick<GitHubClient, "getRepositoryId" | "createBranch" | "createCommitOnBranch">;
+export type Client = Pick<GitHubClient, "getRepositoryId" | "createBranch" | "createCommitOnBranch" | "createBlob" | "createTree" | "createCommit" | "createRef" | "updateRef">;
 /**
  * Splits a commit message into its headline and body.
  *
@@ -21,7 +22,20 @@ export declare function splitCommitMessage(message: string): {
     body?: string;
 };
 /**
- * Commits all changes in the working directory via GitHub GraphQL API.
+ * Reports whether the change can be committed by the createCommitOnBranch mutation.
+ * The mutation supports only regular files.
+ *
+ * @param change The change.
+ * @returns true if the mutation supports the change.
+ */
+export declare function isRegularFileChange(change: StagedChange): boolean;
+/**
+ * Commits all changes in the working directory via GitHub API.
+ *
+ * If all changes are regular files, the commit is created by the
+ * createCommitOnBranch GraphQL mutation. Otherwise (executable files,
+ * symbolic links or submodules are involved), it is created by the Git
+ * Database REST API, because the mutation doesn't support file modes.
  *
  * @param options The options.
  * @param client The GitHub API client.

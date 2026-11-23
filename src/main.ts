@@ -2,13 +2,21 @@ import * as core from "@actions/core";
 import * as path from "node:path";
 import {
   FileMode,
+  StagedChange,
   getHeadSha,
+  getHeadTreeSha,
   getStagedChanges,
   readBlob,
   stageAll,
   unstageAll,
 } from "./git.js";
-import { Commit, FileAddition, FileDeletion, GitHubClient } from "./github.js";
+import {
+  Commit,
+  FileAddition,
+  FileDeletion,
+  GitHubClient,
+  TreeEntry,
+} from "./github.js";
 
 /** Options of the commit. */
 export interface CommitOptions {
@@ -23,8 +31,18 @@ export interface CommitOptions {
 /** The subset of GitHubClient that commit() uses. */
 export type Client = Pick<
   GitHubClient,
-  "getRepositoryId" | "createBranch" | "createCommitOnBranch"
+  | "getRepositoryId"
+  | "createBranch"
+  | "createCommitOnBranch"
+  | "createBlob"
+  | "createTree"
+  | "createCommit"
+  | "createRef"
+  | "updateRef"
 >;
+
+/** The number of blobs uploaded concurrently. */
+const BLOB_UPLOAD_CONCURRENCY = 4;
 
 /**
  * Splits a commit message into its headline and body.
@@ -46,8 +64,30 @@ export function splitCommitMessage(message: string): {
   return body === "" ? { headline } : { headline, body };
 }
 
+function isDeletion(change: StagedChange): boolean {
+  return change.status === "D" || change.newMode === FileMode.Missing;
+}
+
 /**
- * Commits all changes in the working directory via GitHub GraphQL API.
+ * Reports whether the change can be committed by the createCommitOnBranch mutation.
+ * The mutation supports only regular files.
+ *
+ * @param change The change.
+ * @returns true if the mutation supports the change.
+ */
+export function isRegularFileChange(change: StagedChange): boolean {
+  const regular = (mode: string) =>
+    mode === FileMode.Regular || mode === FileMode.Missing;
+  return regular(change.oldMode) && regular(change.newMode);
+}
+
+/**
+ * Commits all changes in the working directory via GitHub API.
+ *
+ * If all changes are regular files, the commit is created by the
+ * createCommitOnBranch GraphQL mutation. Otherwise (executable files,
+ * symbolic links or submodules are involved), it is created by the Git
+ * Database REST API, because the mutation doesn't support file modes.
  *
  * @param options The options.
  * @param client The GitHub API client.
@@ -67,64 +107,147 @@ export async function commit(
       return undefined;
     }
 
-    const additions: FileAddition[] = [];
-    const deletions: FileDeletion[] = [];
-    for (const change of changes) {
-      if (change.status === "D" || change.newMode === FileMode.Missing) {
-        core.info(`delete: ${change.path}`);
-        deletions.push({ path: change.path });
-        continue;
-      }
-
-      switch (change.newMode) {
-        case FileMode.Submodule:
-          throw new Error(
-            `${change.path}: submodules are not supported by the createCommitOnBranch mutation`,
-          );
-        case FileMode.Symlink:
-          core.warning(
-            `${change.path}: symbolic links are not supported. it will be committed as a regular file.`,
-          );
-          break;
-        case FileMode.Executable:
-          if (change.oldMode !== FileMode.Executable) {
-            core.warning(
-              `${change.path}: the executable bit is not supported. it will be committed as a non-executable file.`,
-            );
-          }
-          break;
-      }
-
-      core.info(`add: ${change.path}`);
-      const contents = await readBlob(change.newSha, cwd);
-      additions.push({
-        path: change.path,
-        contents: contents.toString("base64"),
-      });
-    }
-
-    const headSha = await getHeadSha(cwd);
-    if (options.headBranch !== options.baseBranch) {
-      core.info(`creating a new branch ${options.headBranch} from ${headSha}`);
-      const repositoryId = await client.getRepositoryId(options.repository);
-      await client.createBranch(repositoryId, options.headBranch, headSha);
-    }
-
-    core.info(`creating a commit on ${options.headBranch}`);
-    const created = await client.createCommitOnBranch({
-      branch: {
-        repositoryNameWithOwner: options.repository,
-        branchName: options.headBranch,
-      },
-      expectedHeadOid: headSha,
-      fileChanges: { additions, deletions },
-      message: splitCommitMessage(options.commitMessage),
-    });
+    const created = changes.every(isRegularFileChange)
+      ? await commitWithGraphQL(options, client, changes)
+      : await commitWithGitDatabase(options, client, changes);
     core.info(`created: ${created.url}`);
+    if (!created.verified) {
+      core.warning(
+        `the commit ${created.oid} is not verified. ` +
+          "If the change includes executable files, symbolic links or submodules, " +
+          "the commit is signed only when the token belongs to a GitHub App (e.g. GITHUB_TOKEN).",
+      );
+    }
     return created;
   } finally {
     await unstageAll(cwd);
   }
+}
+
+async function commitWithGraphQL(
+  options: CommitOptions,
+  client: Client,
+  changes: StagedChange[],
+): Promise<Commit> {
+  const cwd = options.workingDirectory;
+  const additions: FileAddition[] = [];
+  const deletions: FileDeletion[] = [];
+  for (const change of changes) {
+    if (isDeletion(change)) {
+      core.info(`delete: ${change.path}`);
+      deletions.push({ path: change.path });
+      continue;
+    }
+    core.info(`add: ${change.path}`);
+    const contents = await readBlob(change.newSha, cwd);
+    additions.push({
+      path: change.path,
+      contents: contents.toString("base64"),
+    });
+  }
+
+  const headSha = await getHeadSha(cwd);
+  if (options.headBranch !== options.baseBranch) {
+    core.info(`creating a new branch ${options.headBranch} from ${headSha}`);
+    const repositoryId = await client.getRepositoryId(options.repository);
+    await client.createBranch(repositoryId, options.headBranch, headSha);
+  }
+
+  core.info(
+    `creating a commit on ${options.headBranch} using the createCommitOnBranch mutation`,
+  );
+  return client.createCommitOnBranch({
+    branch: {
+      repositoryNameWithOwner: options.repository,
+      branchName: options.headBranch,
+    },
+    expectedHeadOid: headSha,
+    fileChanges: { additions, deletions },
+    message: splitCommitMessage(options.commitMessage),
+  });
+}
+
+async function commitWithGitDatabase(
+  options: CommitOptions,
+  client: Client,
+  changes: StagedChange[],
+): Promise<Commit> {
+  const cwd = options.workingDirectory;
+  const repository = options.repository;
+
+  const tree: TreeEntry[] = [];
+  const uploads: { entry: TreeEntry; sha: string }[] = [];
+  for (const change of changes) {
+    if (isDeletion(change)) {
+      core.info(`delete: ${change.path}`);
+      tree.push({
+        path: change.path,
+        mode: change.oldMode,
+        type: change.oldMode === FileMode.Submodule ? "commit" : "blob",
+        sha: null,
+      });
+      continue;
+    }
+
+    if (change.newMode === FileMode.Submodule) {
+      // the sha of a submodule is the commit in the submodule repository.
+      core.info(`add submodule: ${change.path} (${change.newSha})`);
+      tree.push({
+        path: change.path,
+        mode: change.newMode,
+        type: "commit",
+        sha: change.newSha,
+      });
+      continue;
+    }
+
+    core.info(`add: ${change.path} (mode ${change.newMode})`);
+    const entry: TreeEntry = {
+      path: change.path,
+      mode: change.newMode,
+      type: "blob",
+      sha: null,
+    };
+    tree.push(entry);
+    uploads.push({ entry, sha: change.newSha });
+  }
+
+  // upload blobs
+  let next = 0;
+  const worker = async () => {
+    while (next < uploads.length) {
+      const upload = uploads[next++];
+      const contents = await readBlob(upload.sha, cwd);
+      upload.entry.sha = await client.createBlob(repository, contents);
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(BLOB_UPLOAD_CONCURRENCY, uploads.length) },
+      worker,
+    ),
+  );
+
+  const headSha = await getHeadSha(cwd);
+  const baseTree = await getHeadTreeSha(cwd);
+  const treeSha = await client.createTree(repository, baseTree, tree);
+
+  const { headline, body } = splitCommitMessage(options.commitMessage);
+  const message = body === undefined ? headline : `${headline}\n\n${body}`;
+  core.info(
+    `creating a commit on ${options.headBranch} using the Git Database API`,
+  );
+  const created = await client.createCommit(repository, message, treeSha, [
+    headSha,
+  ]);
+
+  if (options.headBranch !== options.baseBranch) {
+    core.info(`creating a new branch ${options.headBranch}`);
+    await client.createRef(repository, options.headBranch, created.oid);
+  } else {
+    await client.updateRef(repository, options.headBranch, created.oid);
+  }
+  return created;
 }
 
 /**

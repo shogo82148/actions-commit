@@ -28,13 +28,33 @@ export interface CreateCommitOnBranchInput {
 export interface Commit {
     oid: string;
     url: string;
+    /** Whether GitHub marks the commit as verified. */
+    verified: boolean;
 }
-/** A minimal client of GitHub GraphQL API. */
+/** An entry of a tree, used by the create tree API. */
+export interface TreeEntry {
+    path: string;
+    mode: string;
+    type: "blob" | "tree" | "commit";
+    /** The SHA of the object, or null to delete the entry. */
+    sha: string | null;
+}
+/** Options of GitHubClient. */
+export interface GitHubClientOptions {
+    /** The endpoint of GitHub GraphQL API. */
+    graphqlUrl?: string;
+    /** The base URL of GitHub REST API. */
+    apiUrl?: string;
+    fetch?: typeof fetch;
+}
+/** A minimal client of GitHub GraphQL API and REST API. */
 export declare class GitHubClient {
     private readonly token;
-    private readonly endpoint;
+    private readonly graphqlUrl;
+    private readonly apiUrl;
     private readonly fetch;
-    constructor(token: string, endpoint?: string, fetchImpl?: typeof fetch);
+    constructor(token: string, options?: GitHubClientOptions);
+    private headers;
     /**
      * Calls GitHub GraphQL API.
      *
@@ -43,6 +63,15 @@ export declare class GitHubClient {
      * @returns The data of the response.
      */
     graphql<T>(query: string, variables: Record<string, unknown>): Promise<T>;
+    /**
+     * Calls GitHub REST API.
+     *
+     * @param method The HTTP method.
+     * @param path The path of the API, e.g. "/repos/octocat/hello-world/git/blobs".
+     * @param body The request body.
+     * @returns The response body.
+     */
+    rest<T>(method: string, path: string, body?: unknown): Promise<T>;
     /**
      * Gets the node ID of a repository.
      *
@@ -65,4 +94,49 @@ export declare class GitHubClient {
      * @returns The commit created.
      */
     createCommitOnBranch(input: CreateCommitOnBranchInput): Promise<Commit>;
+    /**
+     * Creates a blob.
+     *
+     * @param repository The repository name with owner.
+     * @param contents The contents of the blob.
+     * @returns The SHA of the blob.
+     */
+    createBlob(repository: string, contents: Buffer): Promise<string>;
+    /**
+     * Creates a tree.
+     *
+     * @param repository The repository name with owner.
+     * @param baseTree The SHA of the base tree.
+     * @param tree The entries to be updated.
+     * @returns The SHA of the tree.
+     */
+    createTree(repository: string, baseTree: string, tree: TreeEntry[]): Promise<string>;
+    /**
+     * Creates a commit.
+     * The author and the committer are not specified,
+     * so that GitHub can sign the commit if the token belongs to a GitHub App.
+     *
+     * @param repository The repository name with owner.
+     * @param message The commit message.
+     * @param tree The SHA of the tree.
+     * @param parents The SHAs of the parents.
+     * @returns The commit created.
+     */
+    createCommit(repository: string, message: string, tree: string, parents: string[]): Promise<Commit>;
+    /**
+     * Creates a new branch.
+     *
+     * @param repository The repository name with owner.
+     * @param branch The name of the branch.
+     * @param sha The SHA of the commit that the branch points to.
+     */
+    createRef(repository: string, branch: string, sha: string): Promise<void>;
+    /**
+     * Updates a branch. It fails if the update is not a fast-forward.
+     *
+     * @param repository The repository name with owner.
+     * @param branch The name of the branch.
+     * @param sha The SHA of the commit that the branch points to.
+     */
+    updateRef(repository: string, branch: string, sha: string): Promise<void>;
 }
