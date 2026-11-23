@@ -1,5 +1,6 @@
 /**
  * Runs a git command and returns its standard output.
+ * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
  * @param args The arguments passed to git.
  * @param cwd The working directory.

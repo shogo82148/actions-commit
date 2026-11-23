@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import * as exec from "@actions/exec";
 
 /**
  * Runs a git command and returns its standard output.
+ * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
  * @param args The arguments passed to git.
  * @param cwd The working directory.
@@ -13,30 +14,27 @@ export async function git(
   cwd: string,
   env: Record<string, string> = {},
 ): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("git", args, {
-      cwd,
-      env: { ...process.env, ...env },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve(Buffer.concat(stdout));
-        return;
-      }
-      const message = Buffer.concat(stderr).toString("utf8").trim();
-      reject(
-        new Error(
-          `git ${args.join(" ")} failed with exit code ${code}: ${message}`,
-        ),
-      );
-    });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  const code = await exec.exec("git", args, {
+    cwd,
+    // exec.exec replaces the environment variables entirely, so merge them.
+    env: { ...(process.env as Record<string, string>), ...env },
+    // don't print the command and its output, they may contain the contents of files.
+    silent: true,
+    ignoreReturnCode: true,
+    listeners: {
+      stdout: (data: Buffer) => stdout.push(data),
+      stderr: (data: Buffer) => stderr.push(data),
+    },
   });
+  if (code !== 0) {
+    const message = Buffer.concat(stderr).toString("utf8").trim();
+    throw new Error(
+      `git ${args.join(" ")} failed with exit code ${code}: ${message}`,
+    );
+  }
+  return Buffer.concat(stdout);
 }
 
 /** File modes of git objects. */
