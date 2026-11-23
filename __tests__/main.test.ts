@@ -420,13 +420,26 @@ describe("checkout", () => {
     expect(await rev("HEAD")).toBe(sha);
     expect(await rev("refs/heads/main")).toBe(sha);
     expect(await rev("refs/remotes/origin/main")).toBe(sha);
-    expect(
-      (await git(["symbolic-ref", "--short", "HEAD"], dir)).toString().trim(),
-    ).toBe("main");
+    expect(await currentBranch()).toBe("main");
+    expect(await upstream("main")).toBe("origin/main");
     expect(await status()).toBe("");
   });
 
-  it("detaches HEAD if the commit is on another branch", async () => {
+  async function currentBranch(): Promise<string> {
+    return (await git(["symbolic-ref", "--short", "HEAD"], dir))
+      .toString()
+      .trim();
+  }
+
+  async function upstream(branch: string): Promise<string> {
+    return (
+      await git(["rev-parse", "--abbrev-ref", `${branch}@{upstream}`], dir)
+    )
+      .toString()
+      .trim();
+  }
+
+  it("switches to the head branch if the commit is on another branch", async () => {
     const base = await rev("HEAD");
     await changes(dir);
     const sha = await createRemoteCommit("topic", changes);
@@ -436,13 +449,46 @@ describe("checkout", () => {
       sha,
     );
 
+    expect(await currentBranch()).toBe("topic");
     expect(await rev("HEAD")).toBe(sha);
+    expect(await rev("refs/heads/topic")).toBe(sha);
+    expect(await rev("refs/remotes/origin/topic")).toBe(sha);
+    expect(await upstream("topic")).toBe("origin/topic");
     // the base branch is not changed.
     expect(await rev("refs/heads/main")).toBe(base);
-    expect(await rev("refs/remotes/origin/topic")).toBe(sha);
-    await expect(
-      git(["symbolic-ref", "--quiet", "HEAD"], dir),
-    ).rejects.toThrow();
+    expect(await status()).toBe("");
+  });
+
+  it("moves the existing head branch to the commit", async () => {
+    const base = await rev("HEAD");
+    // the local head branch exists, but it is not checked out.
+    await git(["branch", "topic", base], dir);
+    await changes(dir);
+    const sha = await createRemoteCommit("topic", changes);
+
+    await checkout(
+      { workingDirectory: dir, headBranch: "topic", remoteUrl: remote },
+      sha,
+    );
+
+    expect(await currentBranch()).toBe("topic");
+    expect(await rev("refs/heads/topic")).toBe(sha);
+    expect(await rev("refs/heads/main")).toBe(base);
+    expect(await status()).toBe("");
+  });
+
+  it("switches from a detached HEAD", async () => {
+    await git(["checkout", "--quiet", "--detach"], dir);
+    await changes(dir);
+    const sha = await createRemoteCommit("main", changes);
+
+    await checkout(
+      { workingDirectory: dir, headBranch: "main", remoteUrl: remote },
+      sha,
+    );
+
+    expect(await currentBranch()).toBe("main");
+    expect(await rev("refs/heads/main")).toBe(sha);
     expect(await status()).toBe("");
   });
 

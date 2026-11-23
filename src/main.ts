@@ -265,7 +265,7 @@ export interface CheckoutOptions {
 }
 
 /**
- * Fetches the commit created by the API, and checks it out.
+ * Fetches the commit created by the API, and checks out the head branch at the commit.
  * After that, HEAD points to the commit and the working tree is clean
  * (except changes that are not committed, e.g. outside of the working directory).
  *

@@ -28993,38 +28993,26 @@ async function fetchCommit(cwd, url, sha, ref, env = {}) {
     ], cwd, env);
 }
 /**
- * Checks out a commit, keeping the working tree as is.
+ * Checks out the branch, and moves it to the commit, keeping the working tree as is.
  * The working tree already contains the changes of the commit,
- * so only HEAD and the index are updated.
+ * so only the branch, HEAD and the index are updated.
+ * Changes that are not included in the commit are kept in the working tree.
  *
- * If the current branch is `branch`, the branch is moved to the commit.
- * Otherwise, HEAD is detached at the commit.
+ * The local branch is created if it doesn't exist, or reset to the commit if it exists.
+ * The upstream of the branch is set to the remote-tracking branch `origin/<branch>`.
  *
  * @param cwd The working directory.
  * @param sha The SHA of the commit.
  * @param branch The branch that the commit was created on.
  */
 async function checkoutCommit(cwd, sha, branch) {
-    if ((await getCurrentBranch(cwd)) !== branch) {
-        // detaching at the current HEAD doesn't touch the working tree.
-        await git(["checkout", "--quiet", "--detach"], cwd);
-    }
+    const ref = `refs/heads/${branch}`;
+    // unlike `git checkout -B`, these commands never touch the working tree.
+    await git(["update-ref", "-m", `actions-commit: moving to ${sha}`, ref, sha], cwd);
+    await git(["symbolic-ref", "HEAD", ref], cwd);
     await git(["reset", "--quiet", "--mixed", sha], cwd);
-}
-/**
- * Gets the name of the current branch.
- *
- * @param cwd The working directory.
- * @returns The name of the current branch, or undefined if HEAD is detached.
- */
-async function getCurrentBranch(cwd) {
-    try {
-        const output = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd);
-        return output.toString("utf8").trim();
-    }
-    catch {
-        return undefined;
-    }
+    await git(["config", `branch.${branch}.remote`, "origin"], cwd);
+    await git(["config", `branch.${branch}.merge`, ref], cwd);
 }
 
 /** A minimal client of GitHub GraphQL API and REST API. */
@@ -29390,7 +29378,7 @@ async function commitWithGitDatabase(options, client, changes) {
     return created;
 }
 /**
- * Fetches the commit created by the API, and checks it out.
+ * Fetches the commit created by the API, and checks out the head branch at the commit.
  * After that, HEAD points to the commit and the working tree is clean
  * (except changes that are not committed, e.g. outside of the working directory).
  *

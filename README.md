@@ -28,7 +28,8 @@ jobs:
 
 The action stages all changes in the `working-directory` and sends them to GitHub through the API.
 After that, it fetches the commit and checks it out, so that `HEAD` points to the commit and the working tree is clean.
-If `head-branch` is same as the current branch, the branch is moved to the commit. Otherwise, `HEAD` is detached at the commit.
+The action switches to the local `head-branch` (it is created if it doesn't exist), and moves it to the commit.
+Its upstream is set to `origin/<head-branch>`.
 The working tree is not changed by the checkout, so changes that are not committed (e.g. outside of `working-directory`) are kept.
 
 How the commit is created depends on the changes.

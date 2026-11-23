@@ -99,22 +99,16 @@ export declare function authEnv(serverUrl: string, token: string): Record<string
  */
 export declare function fetchCommit(cwd: string, url: string, sha: string, ref: string, env?: Record<string, string>): Promise<void>;
 /**
- * Checks out a commit, keeping the working tree as is.
+ * Checks out the branch, and moves it to the commit, keeping the working tree as is.
  * The working tree already contains the changes of the commit,
- * so only HEAD and the index are updated.
+ * so only the branch, HEAD and the index are updated.
+ * Changes that are not included in the commit are kept in the working tree.
  *
- * If the current branch is `branch`, the branch is moved to the commit.
- * Otherwise, HEAD is detached at the commit.
+ * The local branch is created if it doesn't exist, or reset to the commit if it exists.
+ * The upstream of the branch is set to the remote-tracking branch `origin/<branch>`.
  *
  * @param cwd The working directory.
  * @param sha The SHA of the commit.
  * @param branch The branch that the commit was created on.
  */
 export declare function checkoutCommit(cwd: string, sha: string, branch: string): Promise<void>;
-/**
- * Gets the name of the current branch.
- *
- * @param cwd The working directory.
- * @returns The name of the current branch, or undefined if HEAD is detached.
- */
-export declare function getCurrentBranch(cwd: string): Promise<string | undefined>;

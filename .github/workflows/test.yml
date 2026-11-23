@@ -24,7 +24,7 @@ jobs:
         with:
           head-branch: ${{ env.HEAD_BRANCH }}
       - name: verify
-        run: ./testdata/verify.sh "$COMMIT_SHA"
+        run: ./testdata/verify.sh "$COMMIT_SHA" "$HEAD_BRANCH"
         shell: bash
         env:
           COMMIT_SHA: ${{ steps.commit.outputs.commit-sha }}
@@ -54,7 +54,7 @@ jobs:
         with:
           head-branch: ${{ env.HEAD_BRANCH }}
       - name: verify
-        run: ./testdata/verify.sh "$COMMIT_SHA"
+        run: ./testdata/verify.sh "$COMMIT_SHA" "$HEAD_BRANCH"
         shell: bash
         env:
           COMMIT_SHA: ${{ steps.commit.outputs.commit-sha }}
