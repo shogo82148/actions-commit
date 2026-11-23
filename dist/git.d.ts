@@ -58,6 +58,12 @@ export declare function getStagedChanges(cwd: string): Promise<StagedChange[]>;
 /**
  * Reads the contents of a blob.
  *
+ * The contents are not read from the standard output of `git cat-file blob`,
+ * because @actions/exec splits the standard output into lines, and it takes
+ * quadratic time for large blobs without line separators.
+ * Instead, `git unpack-file` writes the contents into a temporary file
+ * at the top level of the working tree, and it is read and removed here.
+ *
  * @param sha The SHA of the blob.
  * @param cwd The working directory.
  * @returns The contents of the blob.

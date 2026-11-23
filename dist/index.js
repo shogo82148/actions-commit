@@ -34,6 +34,7 @@ import require$$5$3 from 'string_decoder';
 import * as child from 'child_process';
 import { setTimeout as setTimeout$1 } from 'timers';
 import * as path$1 from 'node:path';
+import * as fs$1 from 'node:fs/promises';
 
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -29732,12 +29733,29 @@ async function getStagedChanges(cwd) {
 /**
  * Reads the contents of a blob.
  *
+ * The contents are not read from the standard output of `git cat-file blob`,
+ * because @actions/exec splits the standard output into lines, and it takes
+ * quadratic time for large blobs without line separators.
+ * Instead, `git unpack-file` writes the contents into a temporary file
+ * at the top level of the working tree, and it is read and removed here.
+ *
  * @param sha The SHA of the blob.
  * @param cwd The working directory.
  * @returns The contents of the blob.
  */
 async function readBlob(sha, cwd) {
-    return git(["cat-file", "blob", sha], cwd);
+    const toplevel = (await git(["rev-parse", "--show-toplevel"], cwd))
+        .toString("utf8")
+        .trim();
+    // the name of the temporary file, relative to the top level, e.g. ".merge_file_XXXXXX".
+    const name = (await git(["unpack-file", sha], cwd)).toString("utf8").trim();
+    const file = path$1.join(toplevel, name);
+    try {
+        return await fs$1.readFile(file);
+    }
+    finally {
+        await fs$1.rm(file, { force: true });
+    }
 }
 /**
  * Resolves the commit SHA of HEAD.

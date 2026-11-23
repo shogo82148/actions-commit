@@ -1,4 +1,6 @@
 import * as exec from "@actions/exec";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
 /**
  * Runs a git command and returns its standard output.
@@ -125,12 +127,28 @@ export async function getStagedChanges(cwd: string): Promise<StagedChange[]> {
 /**
  * Reads the contents of a blob.
  *
+ * The contents are not read from the standard output of `git cat-file blob`,
+ * because @actions/exec splits the standard output into lines, and it takes
+ * quadratic time for large blobs without line separators.
+ * Instead, `git unpack-file` writes the contents into a temporary file
+ * at the top level of the working tree, and it is read and removed here.
+ *
  * @param sha The SHA of the blob.
  * @param cwd The working directory.
  * @returns The contents of the blob.
  */
 export async function readBlob(sha: string, cwd: string): Promise<Buffer> {
-  return git(["cat-file", "blob", sha], cwd);
+  const toplevel = (await git(["rev-parse", "--show-toplevel"], cwd))
+    .toString("utf8")
+    .trim();
+  // the name of the temporary file, relative to the top level, e.g. ".merge_file_XXXXXX".
+  const name = (await git(["unpack-file", sha], cwd)).toString("utf8").trim();
+  const file = path.join(toplevel, name);
+  try {
+    return await fs.readFile(file);
+  } finally {
+    await fs.rm(file, { force: true });
+  }
 }
 
 /**

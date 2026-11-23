@@ -85,6 +85,33 @@ describe("git", () => {
     expect(await readBlob(sha, dir)).toEqual(contents);
   });
 
+  it("reads a blob from a subdirectory, and removes the temporary file", async () => {
+    await fs.mkdir(path.join(dir, "sub"));
+    await fs.writeFile(path.join(dir, "sub", "file"), "contents\n");
+    const sha = (await git(["hash-object", "-w", "sub/file"], dir))
+      .toString()
+      .trim();
+
+    const contents = await readBlob(sha, path.join(dir, "sub"));
+
+    expect(contents.toString()).toBe("contents\n");
+    // no temporary files are left in the working tree.
+    const status = await git(
+      ["status", "--porcelain", "--untracked-files=all"],
+      dir,
+    );
+    expect(status.toString()).toBe("?? sub/file\n");
+  });
+
+  it("reads a large blob without line separators", async () => {
+    const contents = Buffer.alloc(32 * 1024 * 1024, "a");
+    await fs.writeFile(path.join(dir, "large"), contents);
+    const sha = (await git(["hash-object", "-w", "large"], dir))
+      .toString()
+      .trim();
+    expect((await readBlob(sha, dir)).equals(contents)).toBe(true);
+  });
+
   it("passes additional environment variables", async () => {
     const output = await git(["config", "--get", "foo.bar"], dir, {
       GIT_CONFIG_COUNT: "1",
