@@ -10,6 +10,11 @@ import type {
 } from "../src/github.js";
 import { Client, checkout, commit, splitCommitMessage } from "../src/main.js";
 
+// double quotes are not allowed in file names on Windows.
+const isWindows = process.platform === "win32";
+const deleteMe = isWindows ? "please delete me.txt" : '"please delete me".txt';
+const newFile = isWindows ? "new file.txt" : '"new file".txt';
+
 const gitConfig = [
   "-c",
   "user.name=test",
@@ -22,7 +27,7 @@ const gitConfig = [
 async function setupRepository(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "actions-commit-"));
   await git(["init", "--quiet", "--initial-branch=main"], dir);
-  await fs.writeFile(path.join(dir, '"please delete me".txt'), "delete\n");
+  await fs.writeFile(path.join(dir, deleteMe), "delete\n");
   await fs.writeFile(path.join(dir, "rename-me.txt"), "rename\n");
   await fs.writeFile(path.join(dir, "update-me.txt"), "please update me!\n");
   await fs.mkdir(path.join(dir, "sub"));
@@ -116,13 +121,13 @@ describe("commit", () => {
   });
 
   it("commits all changes", async () => {
-    await fs.rm(path.join(dir, '"please delete me".txt'));
+    await fs.rm(path.join(dir, deleteMe));
     await fs.rename(
       path.join(dir, "rename-me.txt"),
       path.join(dir, "renamed!.txt"),
     );
     await fs.appendFile(path.join(dir, "update-me.txt"), "UPDATED!!\n");
-    await fs.writeFile(path.join(dir, '"new file".txt'), "brand new\n");
+    await fs.writeFile(path.join(dir, newFile), "brand new\n");
     const head = (await git(["rev-parse", "HEAD"], dir)).toString().trim();
 
     const { client, calls } = fakeClient();
@@ -157,14 +162,13 @@ describe("commit", () => {
       input.fileChanges.additions.map((a) => [a.path, decode(a.contents)]),
     );
     expect(additions).toEqual({
-      '"new file".txt': "brand new\n",
+      [newFile]: "brand new\n",
       "renamed!.txt": "rename\n",
       "update-me.txt": "please update me!\nUPDATED!!\n",
     });
-    expect(input.fileChanges.deletions.map((d) => d.path).sort()).toEqual([
-      '"please delete me".txt',
-      "rename-me.txt",
-    ]);
+    expect(input.fileChanges.deletions.map((d) => d.path).sort()).toEqual(
+      [deleteMe, "rename-me.txt"].sort(),
+    );
 
     // the index should be restored.
     const staged = await git(["diff", "--cached", "--name-only"], dir);
@@ -238,6 +242,42 @@ describe("commit", () => {
   });
 
   describe("file modes", () => {
+    // Windows has no executable bits, and creating symbolic links needs a privilege.
+    // So git for Windows doesn't read them from the working tree (core.fileMode=false, core.symlinks=false),
+    // and keeps the file modes recorded in the index instead.
+    // Windows users change the modes via the index, so do it in the same way.
+    beforeEach(async () => {
+      if (isWindows) {
+        await git(["config", "core.fileMode", "false"], dir);
+        await git(["config", "core.symlinks", "false"], dir);
+      }
+    });
+
+    async function makeExecutable(file: string) {
+      if (isWindows) {
+        await git(["add", "--", file], dir);
+        await git(["update-index", "--chmod=+x", "--", file], dir);
+      } else {
+        await fs.chmod(path.join(dir, file), 0o755);
+      }
+    }
+
+    async function addSymlink(target: string, file: string) {
+      if (isWindows) {
+        // it is checked out as a plain file that contains the target path.
+        await fs.writeFile(path.join(dir, file), target);
+        const sha = (await git(["hash-object", "-w", "--", file], dir))
+          .toString()
+          .trim();
+        await git(
+          ["update-index", "--add", "--cacheinfo", `120000,${sha},${file}`],
+          dir,
+        );
+      } else {
+        await fs.symlink(target, path.join(dir, file));
+      }
+    }
+
     // replaces the path in the tree entries with the contents of uploaded blobs.
     function summarize(tree: TreeEntry[], blobs: Map<string, string>) {
       return Object.fromEntries(
@@ -254,13 +294,12 @@ describe("commit", () => {
 
     it("commits executable files, symbolic links and submodules", async () => {
       // make an existing file executable
-      await fs.chmod(path.join(dir, "update-me.txt"), 0o755);
+      await makeExecutable("update-me.txt");
       // add a new executable file
-      await fs.writeFile(path.join(dir, "run.sh"), "#!/bin/sh\n", {
-        mode: 0o755,
-      });
+      await fs.writeFile(path.join(dir, "run.sh"), "#!/bin/sh\n");
+      await makeExecutable("run.sh");
       // add a symbolic link
-      await fs.symlink("update-me.txt", path.join(dir, "link"));
+      await addSymlink("update-me.txt", "link");
       // add a submodule
       const sub = path.join(dir, "submodule");
       await fs.mkdir(sub);
@@ -319,7 +358,7 @@ describe("commit", () => {
 
     it("deletes symbolic links and submodules", async () => {
       // prepare a symbolic link and a submodule in HEAD
-      await fs.symlink("update-me.txt", path.join(dir, "link"));
+      await addSymlink("update-me.txt", "link");
       const sub = path.join(dir, "submodule");
       await fs.mkdir(sub);
       await git(["init", "--quiet"], sub);

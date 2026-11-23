@@ -1,0 +1,33 @@
+name: unit test
+
+# unlike test.yml, the unit tests need no write permissions,
+# so they also run on pull requests from forks.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: ".node-version"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Test
+        run: npm test

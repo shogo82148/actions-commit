@@ -150,7 +150,8 @@ describe("git", () => {
     const debugLog = () =>
       written
         .join("")
-        .split("\n")
+        // @actions/core uses os.EOL, i.e. CRLF on Windows.
+        .split(/\r?\n/)
         .filter((line) => line.startsWith("::debug::"))
         .map((line) => line.slice("::debug::".length));
 
