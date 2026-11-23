@@ -139,3 +139,14 @@ export async function getHeadSha(cwd: string): Promise<string> {
   const output = await git(["rev-parse", "HEAD"], cwd);
   return output.toString("utf8").trim();
 }
+
+/**
+ * Resolves the tree SHA of HEAD.
+ *
+ * @param cwd The working directory.
+ * @returns The SHA of the tree of HEAD.
+ */
+export async function getHeadTreeSha(cwd: string): Promise<string> {
+  const output = await git(["rev-parse", "HEAD^{tree}"], cwd);
+  return output.toString("utf8").trim();
+}

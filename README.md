@@ -24,11 +24,20 @@ jobs:
         uses: shogo82148/actions-commit@v1
 ```
 
-## Limitation
+## How it works
 
-Currently (on 2022-01-03), the [createCommitOnBranch](https://docs.github.com/en/graphql/reference/mutations#createcommitonbranch) mutation doesn't support file types (i.e. regular file, symlink, submodule, ...).
-All files will be committed as regular files.
-You can't create executable files, symlinks, submodules, and so on.
+The action stages all changes in the `working-directory` and sends them to GitHub through the API.
+How the commit is created depends on the changes.
+
+- If all changes are regular files, the commit is created by the [createCommitOnBranch](https://docs.github.com/en/graphql/reference/mutations#createcommitonbranch) mutation of the GraphQL API.
+  The commit is signed by GitHub with any token, including personal access tokens.
+- If the changes involve executable files, symbolic links, or submodules, the commit is created by the [Git Database REST API](https://docs.github.com/en/rest/git) (blobs, trees, commits, and refs),
+  because the createCommitOnBranch mutation doesn't support file modes.
+  In this case, whether the commit is signed depends on the token.
+  The commit created with `${{ github.token }}` is signed and verified,
+  but the commit created with a token that authenticates as a user (e.g. a personal access token) is not signed.
+  See [Signature verification for bots](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#signature-verification-for-bots).
+  The action shows a warning if the commit is not verified.
 
 ## Inputs
 
@@ -44,10 +53,26 @@ The base branch. The default is the branch name that triggered the workflow run.
 
 The head branch. The default is same as `base-branch`.
 
-### commit-message:
+### commit-message
 
 The commit message.
 The default is "Auto updates by the $GITHUB_WORKFLOW workflow".
+If the message has multiple lines, the first line is used as the headline, and the rest is used as the body.
+
+### working-directory
+
+The working directory. The default is `.`.
+Only the changes under the directory are committed.
+
+## Outputs
+
+### commit-url
+
+The URL of the commit created.
+
+### commit-sha
+
+The SHA of the commit created.
 
 ## Related Works
 

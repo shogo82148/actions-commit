@@ -21,3 +21,31 @@ jobs:
         uses: $/
         with:
           head-branch: "actions-commit/${{ github.run_id}}-${{ github.run_attempt }}"
+      - name: verify
+        run: ./testdata/verify.sh "$COMMIT_SHA"
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ steps.commit.outputs.commit-sha }}
+          GH_TOKEN: ${{ github.token }}
+
+  test-file-modes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: make some changes
+        run: |
+          ./testdata/update.sh
+          ./testdata/update-file-modes.sh
+        shell: bash
+      - id: commit
+        uses: $/
+        with:
+          head-branch: "actions-commit/${{ github.run_id}}-${{ github.run_attempt }}-file-modes"
+      - name: verify
+        run: ./testdata/verify.sh "$COMMIT_SHA"
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ steps.commit.outputs.commit-sha }}
+          GH_TOKEN: ${{ github.token }}
