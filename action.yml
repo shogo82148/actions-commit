@@ -1,5 +1,5 @@
 name: "Commit Action"
-description: "Commit Action"
+description: "Create a signed commit on GitHub using the GraphQL API"
 inputs:
   github-token:
     description: "The GitHub Token"
@@ -10,10 +10,10 @@ inputs:
     required: true
     default: "${{ github.ref_name }}"
   head-branch:
-    description: "The head branch"
+    description: "The head branch. The default is same as base-branch."
     required: false
   commit-message:
-    description: "The commit message"
+    description: 'The commit message. The default is "Auto updates by the $GITHUB_WORKFLOW workflow".'
     required: false
   working-directory:
     description: "The working directory"
@@ -22,17 +22,8 @@ inputs:
 outputs:
   commit-url:
     description: "The URL of a commit created"
-    value: ${{ steps.commit.outputs.commit-url }}
+  commit-sha:
+    description: "The SHA of a commit created"
 runs:
-  using: "composite"
-  steps:
-    - id: commit
-      run: |
-        ${{ github.action_path }}/commit.sh
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        GITHUB_TOKEN: "${{ inputs.github-token }}"
-        INPUT_BASE_BRANCH: "${{ inputs.base-branch }}"
-        INPUT_HEAD_BRANCH: "${{ inputs.head-branch }}"
-        INPUT_COMMIT_MESSAGE: "${{ inputs.commit-message }}"
+  using: "node24"
+  main: "dist/index.js"
