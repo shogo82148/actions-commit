@@ -29173,7 +29173,7 @@ async function commit(options, client) {
         if (!created.verified) {
             warning(`the commit ${created.oid} is not verified. ` +
                 "If the change includes executable files, symbolic links or submodules, " +
-                "the commit is signed only when the token belongs to a GitHub App (e.g. GITHUB_TOKEN).");
+                "the commit is not signed when the token authenticates as a user (e.g. a personal access token). Use GITHUB_TOKEN or a GitHub App token instead.");
         }
         return created;
     }

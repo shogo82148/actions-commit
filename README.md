@@ -33,7 +33,10 @@ How the commit is created depends on the changes.
   The commit is signed by GitHub with any token, including personal access tokens.
 - If the changes involve executable files, symbolic links, or submodules, the commit is created by the [Git Database REST API](https://docs.github.com/en/rest/git) (blobs, trees, commits, and refs),
   because the createCommitOnBranch mutation doesn't support file modes.
-  In this case, the commit is signed only when the token belongs to a GitHub App, such as `${{ github.token }}`.
+  In this case, whether the commit is signed depends on the token.
+  The commit created with `${{ github.token }}` is signed and verified,
+  but the commit created with a token that authenticates as a user (e.g. a personal access token) is not signed.
+  See [Signature verification for bots](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification#signature-verification-for-bots).
   The action shows a warning if the commit is not verified.
 
 ## Inputs
