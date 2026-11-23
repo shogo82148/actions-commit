@@ -24,15 +24,5 @@ outputs:
     description: "The URL of a commit created"
     value: ${{ steps.commit.outputs.commit-url }}
 runs:
-  using: "composite"
-  steps:
-    - id: commit
-      run: |
-        ${{ github.action_path }}/commit.sh
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        GITHUB_TOKEN: "${{ inputs.github-token }}"
-        INPUT_BASE_BRANCH: "${{ inputs.base-branch }}"
-        INPUT_HEAD_BRANCH: "${{ inputs.head-branch }}"
-        INPUT_COMMIT_MESSAGE: "${{ inputs.commit-message }}"
+  using: "node24"
+  main: "dist/index.js"

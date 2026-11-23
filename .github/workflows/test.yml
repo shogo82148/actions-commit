@@ -11,13 +11,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: ./
+      - uses: $/
         with:
           github-token: "this token should be not used because there is no changes"
       - name: make some changes
         run: ./testdata/update.sh
         shell: bash
       - id: commit
-        uses: ./
+        uses: $/
         with:
           head-branch: "actions-commit/${{ github.run_id}}-${{ github.run_attempt }}"
