@@ -27,6 +27,11 @@ jobs:
 ## How it works
 
 The action stages all changes in the `working-directory` and sends them to GitHub through the API.
+After that, it fetches the commit and checks it out, so that `HEAD` points to the commit and the working tree is clean.
+The action switches to the local `head-branch` (it is created if it doesn't exist), and moves it to the commit.
+Its upstream is set to `origin/<head-branch>`.
+The working tree is not changed by the checkout, so changes that are not committed (e.g. outside of `working-directory`) are kept.
+
 How the commit is created depends on the changes.
 
 - If all changes are regular files, the commit is created by the [createCommitOnBranch](https://docs.github.com/en/graphql/reference/mutations#createcommitonbranch) mutation of the GraphQL API.

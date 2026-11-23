@@ -3,9 +3,10 @@
  *
  * @param args The arguments passed to git.
  * @param cwd The working directory.
+ * @param env Additional environment variables.
  * @returns The standard output of the command.
  */
-export declare function git(args: string[], cwd: string): Promise<Buffer>;
+export declare function git(args: string[], cwd: string, env?: Record<string, string>): Promise<Buffer>;
 /** File modes of git objects. */
 export declare const FileMode: {
     readonly Regular: "100644";
@@ -75,3 +76,39 @@ export declare function getHeadSha(cwd: string): Promise<string>;
  * @returns The SHA of the tree of HEAD.
  */
 export declare function getHeadTreeSha(cwd: string): Promise<string>;
+/**
+ * Builds environment variables that make git authenticate with the token.
+ * They are passed via environment variables instead of command line arguments,
+ * so that the token doesn't appear in the process list.
+ * The existing extra headers (e.g. persisted by actions/checkout) are reset,
+ * because duplicated Authorization headers are rejected.
+ *
+ * @param serverUrl The URL of the GitHub server, e.g. "https://github.com".
+ * @param token The token.
+ * @returns The environment variables.
+ */
+export declare function authEnv(serverUrl: string, token: string): Record<string, string>;
+/**
+ * Fetches a commit from the remote repository.
+ *
+ * @param cwd The working directory.
+ * @param url The URL of the remote repository.
+ * @param sha The SHA of the commit.
+ * @param ref The local ref that will point to the commit, e.g. "refs/remotes/origin/main".
+ * @param env Additional environment variables, e.g. authEnv().
+ */
+export declare function fetchCommit(cwd: string, url: string, sha: string, ref: string, env?: Record<string, string>): Promise<void>;
+/**
+ * Checks out the branch, and moves it to the commit, keeping the working tree as is.
+ * The working tree already contains the changes of the commit,
+ * so only the branch, HEAD and the index are updated.
+ * Changes that are not included in the commit are kept in the working tree.
+ *
+ * The local branch is created if it doesn't exist, or reset to the commit if it exists.
+ * The upstream of the branch is set to the remote-tracking branch `origin/<branch>`.
+ *
+ * @param cwd The working directory.
+ * @param sha The SHA of the commit.
+ * @param branch The branch that the commit was created on.
+ */
+export declare function checkoutCommit(cwd: string, sha: string, branch: string): Promise<void>;

@@ -5,12 +5,18 @@ import { spawn } from "node:child_process";
  *
  * @param args The arguments passed to git.
  * @param cwd The working directory.
+ * @param env Additional environment variables.
  * @returns The standard output of the command.
  */
-export async function git(args: string[], cwd: string): Promise<Buffer> {
+export async function git(
+  args: string[],
+  cwd: string,
+  env: Record<string, string> = {},
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, {
       cwd,
+      env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
@@ -149,4 +155,90 @@ export async function getHeadSha(cwd: string): Promise<string> {
 export async function getHeadTreeSha(cwd: string): Promise<string> {
   const output = await git(["rev-parse", "HEAD^{tree}"], cwd);
   return output.toString("utf8").trim();
+}
+
+/**
+ * Builds environment variables that make git authenticate with the token.
+ * They are passed via environment variables instead of command line arguments,
+ * so that the token doesn't appear in the process list.
+ * The existing extra headers (e.g. persisted by actions/checkout) are reset,
+ * because duplicated Authorization headers are rejected.
+ *
+ * @param serverUrl The URL of the GitHub server, e.g. "https://github.com".
+ * @param token The token.
+ * @returns The environment variables.
+ */
+export function authEnv(
+  serverUrl: string,
+  token: string,
+): Record<string, string> {
+  const key = `http.${serverUrl.replace(/\/+$/, "")}/.extraheader`;
+  const credential = Buffer.from(`x-access-token:${token}`).toString("base64");
+  return {
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: key,
+    GIT_CONFIG_VALUE_0: "", // an empty value resets the list of extra headers.
+    GIT_CONFIG_KEY_1: key,
+    GIT_CONFIG_VALUE_1: `AUTHORIZATION: basic ${credential}`,
+  };
+}
+
+/**
+ * Fetches a commit from the remote repository.
+ *
+ * @param cwd The working directory.
+ * @param url The URL of the remote repository.
+ * @param sha The SHA of the commit.
+ * @param ref The local ref that will point to the commit, e.g. "refs/remotes/origin/main".
+ * @param env Additional environment variables, e.g. authEnv().
+ */
+export async function fetchCommit(
+  cwd: string,
+  url: string,
+  sha: string,
+  ref: string,
+  env: Record<string, string> = {},
+): Promise<void> {
+  await git(
+    [
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      "--no-recurse-submodules",
+      url,
+      `+${sha}:${ref}`,
+    ],
+    cwd,
+    env,
+  );
+}
+
+/**
+ * Checks out the branch, and moves it to the commit, keeping the working tree as is.
+ * The working tree already contains the changes of the commit,
+ * so only the branch, HEAD and the index are updated.
+ * Changes that are not included in the commit are kept in the working tree.
+ *
+ * The local branch is created if it doesn't exist, or reset to the commit if it exists.
+ * The upstream of the branch is set to the remote-tracking branch `origin/<branch>`.
+ *
+ * @param cwd The working directory.
+ * @param sha The SHA of the commit.
+ * @param branch The branch that the commit was created on.
+ */
+export async function checkoutCommit(
+  cwd: string,
+  sha: string,
+  branch: string,
+): Promise<void> {
+  const ref = `refs/heads/${branch}`;
+  // unlike `git checkout -B`, these commands never touch the working tree.
+  await git(
+    ["update-ref", "-m", `actions-commit: moving to ${sha}`, ref, sha],
+    cwd,
+  );
+  await git(["symbolic-ref", "HEAD", ref], cwd);
+  await git(["reset", "--quiet", "--mixed", sha], cwd);
+  await git(["config", `branch.${branch}.remote`, "origin"], cwd);
+  await git(["config", `branch.${branch}.merge`, ref], cwd);
 }
