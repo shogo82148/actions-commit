@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -114,9 +115,11 @@ describe("git", () => {
 
   it("passes additional environment variables", async () => {
     const output = await git(["config", "--get", "foo.bar"], dir, {
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: "foo.bar",
-      GIT_CONFIG_VALUE_0: "baz",
+      env: {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "foo.bar",
+        GIT_CONFIG_VALUE_0: "baz",
+      },
     });
     expect(output.toString().trim()).toBe("baz");
   });
@@ -125,5 +128,67 @@ describe("git", () => {
     await expect(git(["rev-parse", "no-such-ref"], dir)).rejects.toThrow(
       /git rev-parse no-such-ref failed with exit code 128: .*no-such-ref/s,
     );
+  });
+
+  describe("debug log", () => {
+    let written: string[];
+
+    beforeEach(() => {
+      written = [];
+      jest
+        .spyOn(process.stdout, "write")
+        .mockImplementation((chunk: string | Uint8Array) => {
+          written.push(chunk.toString());
+          return true;
+        });
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    const debugLog = () =>
+      written
+        .join("")
+        .split("\n")
+        .filter((line) => line.startsWith("::debug::"))
+        .map((line) => line.slice("::debug::".length));
+
+    it("writes the command and its outputs to the debug log", async () => {
+      await git(["config", "--get", "foo.bar"], dir, {
+        env: {
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "foo.bar",
+          GIT_CONFIG_VALUE_0: "baz",
+        },
+      }).catch(() => {});
+      await expect(git(["rev-parse", "no such ref"], dir)).rejects.toThrow();
+
+      const log = debugLog();
+      expect(log).toContain(`[command] git config --get foo.bar (cwd: ${dir})`);
+      expect(log).toContain("[exit code] 0");
+      expect(log).toContain("[stdout] baz");
+      expect(log).toContain(
+        `[command] git rev-parse "no such ref" (cwd: ${dir})`,
+      );
+      expect(log).toContain("[exit code] 128");
+      expect(log.some((line) => line.startsWith("[stderr] fatal:"))).toBe(true);
+      // environment variables are never logged.
+      expect(log.some((line) => line.includes("GIT_CONFIG"))).toBe(false);
+    });
+
+    it("doesn't write contents of files", async () => {
+      await fs.writeFile(path.join(dir, "file"), "file contents\n");
+      const sha = (await git(["hash-object", "-w", "file"], dir))
+        .toString()
+        .trim();
+      written = [];
+
+      expect((await readBlob(sha, dir)).toString()).toBe("file contents\n");
+
+      const log = debugLog();
+      expect(log).toContain(`[command] git unpack-file ${sha} (cwd: ${dir})`);
+      expect(log.some((line) => line.includes("file contents"))).toBe(false);
+    });
   });
 });

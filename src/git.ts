@@ -1,28 +1,43 @@
+import * as core from "@actions/core";
 import * as exec from "@actions/exec";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+
+/** Options of git(). */
+export interface GitOptions {
+  /** Additional environment variables. */
+  env?: Record<string, string>;
+}
 
 /**
  * Runs a git command and returns its standard output.
  * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
+ * The command, its exit code and its outputs are written to the debug log.
+ * The runner shows them only when the debug mode is enabled
+ * (e.g. re-running a job with debug logging).
+ * The environment variables are not logged, because they may contain credentials.
+ *
  * @param args The arguments passed to git.
  * @param cwd The working directory.
- * @param env Additional environment variables.
+ * @param options The options.
  * @returns The standard output of the command.
  */
 export async function git(
   args: string[],
   cwd: string,
-  env: Record<string, string> = {},
+  options: GitOptions = {},
 ): Promise<Buffer> {
+  core.debug(`[command] git ${args.map(quote).join(" ")} (cwd: ${cwd})`);
+
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   const code = await exec.exec("git", args, {
     cwd,
     // exec.exec replaces the environment variables entirely, so merge them.
-    env: { ...(process.env as Record<string, string>), ...env },
-    // don't print the command and its output, they may contain the contents of files.
+    env: { ...(process.env as Record<string, string>), ...options.env },
+    // don't print the command and its output to the log.
+    // they are written to the debug log below instead.
     silent: true,
     ignoreReturnCode: true,
     listeners: {
@@ -30,13 +45,47 @@ export async function git(
       stderr: (data: Buffer) => stderr.push(data),
     },
   });
+  const out = Buffer.concat(stdout);
+  const err = Buffer.concat(stderr);
+
+  core.debug(`[exit code] ${code}`);
+  debugLines("[stdout]", out);
+  debugLines("[stderr]", err);
+
   if (code !== 0) {
-    const message = Buffer.concat(stderr).toString("utf8").trim();
+    const message = err.toString("utf8").trim();
     throw new Error(
       `git ${args.join(" ")} failed with exit code ${code}: ${message}`,
     );
   }
-  return Buffer.concat(stdout);
+  return out;
+}
+
+/**
+ * Quotes an argument for logging, if needed.
+ *
+ * @param arg The argument.
+ * @returns The quoted argument.
+ */
+function quote(arg: string): string {
+  return /^[\w@%+=:,./^{}-]+$/.test(arg) ? arg : JSON.stringify(arg);
+}
+
+/**
+ * Writes the output to the debug log, line by line.
+ * NUL characters (e.g. `git diff -z`) are shown as "\\0".
+ *
+ * @param prefix The prefix of each line.
+ * @param output The output.
+ */
+function debugLines(prefix: string, output: Buffer): void {
+  const text = output.toString("utf8").replace(/\0/g, "\\0").trimEnd();
+  if (text === "") {
+    return;
+  }
+  for (const line of text.split("\n")) {
+    core.debug(`${prefix} ${line}`);
+  }
 }
 
 /** File modes of git objects. */
@@ -225,7 +274,7 @@ export async function fetchCommit(
       `+${sha}:${ref}`,
     ],
     cwd,
-    env,
+    { env },
   );
 }
 
