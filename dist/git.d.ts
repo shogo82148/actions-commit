@@ -1,13 +1,22 @@
+/** Options of git(). */
+export interface GitOptions {
+    /** Additional environment variables. */
+    env?: Record<string, string>;
+}
 /**
  * Runs a git command and returns its standard output.
  * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
+ * When the debug mode is enabled (e.g. re-running a job with debug logging),
+ * the command, its exit code and its outputs are written to the debug log.
+ * The environment variables are not logged, because they may contain credentials.
+ *
  * @param args The arguments passed to git.
  * @param cwd The working directory.
- * @param env Additional environment variables.
+ * @param options The options.
  * @returns The standard output of the command.
  */
-export declare function git(args: string[], cwd: string, env?: Record<string, string>): Promise<Buffer>;
+export declare function git(args: string[], cwd: string, options?: GitOptions): Promise<Buffer>;
 /** File modes of git objects. */
 export declare const FileMode: {
     readonly Regular: "100644";

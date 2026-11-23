@@ -29617,6 +29617,22 @@ function setFailed(message) {
     process.exitCode = ExitCode.Failure;
     error(message);
 }
+//-----------------------------------------------------------------------
+// Logging Commands
+//-----------------------------------------------------------------------
+/**
+ * Gets whether Actions Step Debug is on or not
+ */
+function isDebug() {
+    return process.env['RUNNER_DEBUG'] === '1';
+}
+/**
+ * Writes debug message to user log
+ * @param message debug message
+ */
+function debug(message) {
+    issueCommand('debug', {}, message);
+}
 /**
  * Adds an error issue
  * @param message error issue message. Errors will be converted to string via toString()
@@ -29645,19 +29661,28 @@ function info(message) {
  * Runs a git command and returns its standard output.
  * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
+ * When the debug mode is enabled (e.g. re-running a job with debug logging),
+ * the command, its exit code and its outputs are written to the debug log.
+ * The environment variables are not logged, because they may contain credentials.
+ *
  * @param args The arguments passed to git.
  * @param cwd The working directory.
- * @param env Additional environment variables.
+ * @param options The options.
  * @returns The standard output of the command.
  */
-async function git(args, cwd, env = {}) {
+async function git(args, cwd, options = {}) {
+    const debug$1 = isDebug();
+    if (debug$1) {
+        debug(`[command] git ${args.map(quote).join(" ")} (cwd: ${cwd})`);
+    }
     const stdout = [];
     const stderr = [];
     const code = await exec("git", args, {
         cwd,
         // exec.exec replaces the environment variables entirely, so merge them.
-        env: { ...process.env, ...env },
-        // don't print the command and its output, they may contain the contents of files.
+        env: { ...process.env, ...options.env },
+        // don't print the command and its output to the log.
+        // they are written to the debug log below instead.
         silent: true,
         ignoreReturnCode: true,
         listeners: {
@@ -29665,11 +29690,43 @@ async function git(args, cwd, env = {}) {
             stderr: (data) => stderr.push(data),
         },
     });
+    const out = Buffer.concat(stdout);
+    const err = Buffer.concat(stderr);
+    if (debug$1) {
+        debug(`[exit code] ${code}`);
+        debugLines("[stdout]", out);
+        debugLines("[stderr]", err);
+    }
     if (code !== 0) {
-        const message = Buffer.concat(stderr).toString("utf8").trim();
+        const message = err.toString("utf8").trim();
         throw new Error(`git ${args.join(" ")} failed with exit code ${code}: ${message}`);
     }
-    return Buffer.concat(stdout);
+    return out;
+}
+/**
+ * Quotes an argument for logging, if needed.
+ *
+ * @param arg The argument.
+ * @returns The quoted argument.
+ */
+function quote(arg) {
+    return /^[\w@%+=:,./^{}-]+$/.test(arg) ? arg : JSON.stringify(arg);
+}
+/**
+ * Writes the output to the debug log, line by line.
+ * NUL characters (e.g. `git diff -z`) are shown as "\\0".
+ *
+ * @param prefix The prefix of each line.
+ * @param output The output.
+ */
+function debugLines(prefix, output) {
+    const text = output.toString("utf8").replace(/\0/g, "\\0").trimEnd();
+    if (text === "") {
+        return;
+    }
+    for (const line of text.split("\n")) {
+        debug(`${prefix} ${line}`);
+    }
 }
 /** File modes of git objects. */
 const FileMode = {
@@ -29816,7 +29873,7 @@ async function fetchCommit(cwd, url, sha, ref, env = {}) {
         "--no-recurse-submodules",
         url,
         `+${sha}:${ref}`,
-    ], cwd, env);
+    ], cwd, { env });
 }
 /**
  * Checks out the branch, and moves it to the commit, keeping the working tree as is.
