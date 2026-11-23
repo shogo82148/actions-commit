@@ -1,4 +1,7 @@
-import { authEnv, parseRawDiff } from "../src/git.js";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { authEnv, git, parseRawDiff, readBlob } from "../src/git.js";
 
 describe("parseRawDiff", () => {
   it("parses an empty output", () => {
@@ -57,5 +60,70 @@ describe("authEnv", () => {
       GIT_CONFIG_KEY_1: "http.https://github.com/.extraheader",
       GIT_CONFIG_VALUE_1: `AUTHORIZATION: basic ${Buffer.from("x-access-token:secret").toString("base64")}`,
     });
+  });
+});
+
+describe("git", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "actions-commit-"));
+    await git(["init", "--quiet"], dir);
+  });
+
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("keeps binary output as is", async () => {
+    // invalid as UTF-8
+    const contents = Buffer.from([0x00, 0xff, 0xfe, 0x80, 0x0a, 0xc3]);
+    await fs.writeFile(path.join(dir, "binary"), contents);
+    const sha = (await git(["hash-object", "-w", "binary"], dir))
+      .toString()
+      .trim();
+    expect(await readBlob(sha, dir)).toEqual(contents);
+  });
+
+  it("reads a blob from a subdirectory, and removes the temporary file", async () => {
+    await fs.mkdir(path.join(dir, "sub"));
+    await fs.writeFile(path.join(dir, "sub", "file"), "contents\n");
+    const sha = (await git(["hash-object", "-w", "sub/file"], dir))
+      .toString()
+      .trim();
+
+    const contents = await readBlob(sha, path.join(dir, "sub"));
+
+    expect(contents.toString()).toBe("contents\n");
+    // no temporary files are left in the working tree.
+    const status = await git(
+      ["status", "--porcelain", "--untracked-files=all"],
+      dir,
+    );
+    expect(status.toString()).toBe("?? sub/file\n");
+  });
+
+  it("reads a large blob without line separators", async () => {
+    const contents = Buffer.alloc(32 * 1024 * 1024, "a");
+    await fs.writeFile(path.join(dir, "large"), contents);
+    const sha = (await git(["hash-object", "-w", "large"], dir))
+      .toString()
+      .trim();
+    expect((await readBlob(sha, dir)).equals(contents)).toBe(true);
+  });
+
+  it("passes additional environment variables", async () => {
+    const output = await git(["config", "--get", "foo.bar"], dir, {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "foo.bar",
+      GIT_CONFIG_VALUE_0: "baz",
+    });
+    expect(output.toString().trim()).toBe("baz");
+  });
+
+  it("throws an error with stderr on failure", async () => {
+    await expect(git(["rev-parse", "no-such-ref"], dir)).rejects.toThrow(
+      /git rev-parse no-such-ref failed with exit code 128: .*no-such-ref/s,
+    );
   });
 });
