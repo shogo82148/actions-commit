@@ -7,8 +7,9 @@ export interface GitOptions {
  * Runs a git command and returns its standard output.
  * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
- * When the debug mode is enabled (e.g. re-running a job with debug logging),
- * the command, its exit code and its outputs are written to the debug log.
+ * The command, its exit code and its outputs are written to the debug log.
+ * The runner shows them only when the debug mode is enabled
+ * (e.g. re-running a job with debug logging).
  * The environment variables are not logged, because they may contain credentials.
  *
  * @param args The arguments passed to git.

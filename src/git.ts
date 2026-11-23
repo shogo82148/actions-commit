@@ -13,8 +13,9 @@ export interface GitOptions {
  * Runs a git command and returns its standard output.
  * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
- * When the debug mode is enabled (e.g. re-running a job with debug logging),
- * the command, its exit code and its outputs are written to the debug log.
+ * The command, its exit code and its outputs are written to the debug log.
+ * The runner shows them only when the debug mode is enabled
+ * (e.g. re-running a job with debug logging).
  * The environment variables are not logged, because they may contain credentials.
  *
  * @param args The arguments passed to git.
@@ -27,10 +28,7 @@ export async function git(
   cwd: string,
   options: GitOptions = {},
 ): Promise<Buffer> {
-  const debug = core.isDebug();
-  if (debug) {
-    core.debug(`[command] git ${args.map(quote).join(" ")} (cwd: ${cwd})`);
-  }
+  core.debug(`[command] git ${args.map(quote).join(" ")} (cwd: ${cwd})`);
 
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
@@ -50,11 +48,9 @@ export async function git(
   const out = Buffer.concat(stdout);
   const err = Buffer.concat(stderr);
 
-  if (debug) {
-    core.debug(`[exit code] ${code}`);
-    debugLines("[stdout]", out);
-    debugLines("[stderr]", err);
-  }
+  core.debug(`[exit code] ${code}`);
+  debugLines("[stdout]", out);
+  debugLines("[stderr]", err);
 
   if (code !== 0) {
     const message = err.toString("utf8").trim();

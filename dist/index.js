@@ -29617,15 +29617,6 @@ function setFailed(message) {
     process.exitCode = ExitCode.Failure;
     error(message);
 }
-//-----------------------------------------------------------------------
-// Logging Commands
-//-----------------------------------------------------------------------
-/**
- * Gets whether Actions Step Debug is on or not
- */
-function isDebug() {
-    return process.env['RUNNER_DEBUG'] === '1';
-}
 /**
  * Writes debug message to user log
  * @param message debug message
@@ -29661,8 +29652,9 @@ function info(message) {
  * Runs a git command and returns its standard output.
  * The output is returned as a Buffer, because it may be binary (e.g. contents of blobs).
  *
- * When the debug mode is enabled (e.g. re-running a job with debug logging),
- * the command, its exit code and its outputs are written to the debug log.
+ * The command, its exit code and its outputs are written to the debug log.
+ * The runner shows them only when the debug mode is enabled
+ * (e.g. re-running a job with debug logging).
  * The environment variables are not logged, because they may contain credentials.
  *
  * @param args The arguments passed to git.
@@ -29671,10 +29663,7 @@ function info(message) {
  * @returns The standard output of the command.
  */
 async function git(args, cwd, options = {}) {
-    const debug$1 = isDebug();
-    if (debug$1) {
-        debug(`[command] git ${args.map(quote).join(" ")} (cwd: ${cwd})`);
-    }
+    debug(`[command] git ${args.map(quote).join(" ")} (cwd: ${cwd})`);
     const stdout = [];
     const stderr = [];
     const code = await exec("git", args, {
@@ -29692,11 +29681,9 @@ async function git(args, cwd, options = {}) {
     });
     const out = Buffer.concat(stdout);
     const err = Buffer.concat(stderr);
-    if (debug$1) {
-        debug(`[exit code] ${code}`);
-        debugLines("[stdout]", out);
-        debugLines("[stderr]", err);
-    }
+    debug(`[exit code] ${code}`);
+    debugLines("[stdout]", out);
+    debugLines("[stderr]", err);
     if (code !== 0) {
         const message = err.toString("utf8").trim();
         throw new Error(`git ${args.join(" ")} failed with exit code ${code}: ${message}`);

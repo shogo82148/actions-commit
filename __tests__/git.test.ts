@@ -132,10 +132,8 @@ describe("git", () => {
 
   describe("debug log", () => {
     let written: string[];
-    let runnerDebug: string | undefined;
 
     beforeEach(() => {
-      runnerDebug = process.env.RUNNER_DEBUG;
       written = [];
       jest
         .spyOn(process.stdout, "write")
@@ -147,11 +145,6 @@ describe("git", () => {
 
     afterEach(() => {
       jest.restoreAllMocks();
-      if (runnerDebug === undefined) {
-        delete process.env.RUNNER_DEBUG;
-      } else {
-        process.env.RUNNER_DEBUG = runnerDebug;
-      }
     });
 
     const debugLog = () =>
@@ -161,8 +154,7 @@ describe("git", () => {
         .filter((line) => line.startsWith("::debug::"))
         .map((line) => line.slice("::debug::".length));
 
-    it("writes the command and its outputs in the debug mode", async () => {
-      process.env.RUNNER_DEBUG = "1";
+    it("writes the command and its outputs to the debug log", async () => {
       await git(["config", "--get", "foo.bar"], dir, {
         env: {
           GIT_CONFIG_COUNT: "1",
@@ -186,7 +178,6 @@ describe("git", () => {
     });
 
     it("doesn't write contents of files", async () => {
-      process.env.RUNNER_DEBUG = "1";
       await fs.writeFile(path.join(dir, "file"), "file contents\n");
       const sha = (await git(["hash-object", "-w", "file"], dir))
         .toString()
@@ -198,12 +189,6 @@ describe("git", () => {
       const log = debugLog();
       expect(log).toContain(`[command] git unpack-file ${sha} (cwd: ${dir})`);
       expect(log.some((line) => line.includes("file contents"))).toBe(false);
-    });
-
-    it("writes nothing if the debug mode is disabled", async () => {
-      delete process.env.RUNNER_DEBUG;
-      await git(["rev-parse", "--git-dir"], dir);
-      expect(debugLog()).toEqual([]);
     });
   });
 });
