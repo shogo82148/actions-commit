@@ -6,11 +6,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     env:
-      HEAD_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}"
+      HEAD_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: $/
@@ -37,11 +41,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   test-file-modes:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     env:
-      HEAD_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}-file-modes"
+      HEAD_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}-file-modes"
     steps:
       - uses: actions/checkout@v7.0.1
       - name: make some changes
@@ -69,11 +77,15 @@ jobs:
   # the action should work without credentials persisted by actions/checkout,
   # because it fetches the commit with the github-token input.
   test-without-persisted-credentials:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     env:
-      HEAD_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}-without-persisted-credentials"
+      HEAD_BRANCH: "actions-commit/${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}-without-persisted-credentials"
     steps:
       - uses: actions/checkout@v7.0.1
         with:

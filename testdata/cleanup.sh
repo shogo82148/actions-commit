@@ -21,7 +21,8 @@ fi
 # it is empty if the request didn't reach GitHub (e.g. network errors).
 STATUS=$(printf '%s\n' "$RESPONSE" | head -n 1 | awk '{ print $2 }')
 # the body follows the headers and an empty line.
-MESSAGE=$(printf '%s\n' "$RESPONSE" | sed '1,/^\r\{0,1\}$/d' | jq -r '.message // empty' 2>/dev/null || true)
+# CRs are removed first, because BSD sed on macOS doesn't support \r.
+MESSAGE=$(printf '%s\n' "$RESPONSE" | tr -d '\r' | sed '1,/^$/d' | jq -r '.message // empty' 2>/dev/null || true)
 
 # the branch may not exist if the test failed before creating it,
 # or if someone else deleted it. GitHub returns 422 "Reference does not exist" in that case.
